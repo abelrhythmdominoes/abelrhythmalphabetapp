@@ -1,23 +1,15 @@
 // Bump VERSION whenever you deploy changes so installed copies refresh.
-const VERSION = 'abel-v1';
-const CORE = ['./', './index.html', './manifest.webmanifest',
+const VERSION = 'abel-v3';
+const CORE = ['./index.html', './manifest.webmanifest',
   './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png'];
-const CDN = [
-  'https://cdn.tailwindcss.com/3.4.17',
-  'https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js',
-  'https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js',
-  'https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.24.7/babel.min.js',
-  'https://cdn.jsdelivr.net/npm/lucide@0.460.0/dist/umd/lucide.min.js'
-];
 
 self.addEventListener('install', (e) => {
   e.waitUntil((async () => {
     const cache = await caches.open(VERSION);
+    // Only same-origin files are pre-cached. CDN libraries are cached at runtime
+    // from the page's own requests, so the cached response type always matches
+    // how the page requested them (CORS vs no-cors).
     await cache.addAll(CORE);
-    // Cache CDN libraries too (no-cors => opaque, which is fine for <script>)
-    await Promise.all(CDN.map(async (u) => {
-      try { await cache.put(u, await fetch(new Request(u, { mode: 'no-cors' }))); } catch (_) {}
-    }));
     self.skipWaiting();
   })());
 });
@@ -34,14 +26,33 @@ self.addEventListener('fetch', (e) => {
   if (req.method !== 'GET') return;
   e.respondWith((async () => {
     const cache = await caches.open(VERSION);
-    const hit = await cache.match(req, { ignoreSearch: true });
-    // Pages: network first so updates arrive; fall back to cache offline.
+
+    // Page loads: network first so updates arrive; fall back to cache offline.
     if (req.mode === 'navigate') {
-      try { const r = await fetch(req); cache.put(req, r.clone()); return r; }
-      catch (_) { return hit || cache.match('./index.html'); }
+      try {
+        const r = await fetch(req);
+        if (r && r.ok) cache.put(req, r.clone());
+        return r;
+      } catch (_) {
+        return (await cache.match(req, { ignoreSearch: true })) || (await cache.match('./index.html')) || Response.error();
+      }
     }
-    // Everything else: cache first, refresh in background.
-    const refresh = fetch(req).then((r) => { if (r && (r.ok || r.type === 'opaque')) cache.put(req, r.clone()); return r; }).catch(() => null);
-    return hit || (await refresh) || Response.error();
+
+    // Everything else: cache first, otherwise fetch and store.
+    let hit = await cache.match(req);
+    // Never give an opaque response to a CORS-mode request: the browser would reject it.
+    if (hit && hit.type === 'opaque' && req.mode === 'cors') hit = null;
+    if (hit) {
+      // Refresh quietly in the background.
+      fetch(req).then((r) => { if (r && (r.ok || r.type === 'opaque')) cache.put(req, r); }).catch(() => {});
+      return hit;
+    }
+    try {
+      const r = await fetch(req);
+      if (r && (r.ok || r.type === 'opaque')) cache.put(req, r.clone());
+      return r;
+    } catch (_) {
+      return Response.error();
+    }
   })());
 });
