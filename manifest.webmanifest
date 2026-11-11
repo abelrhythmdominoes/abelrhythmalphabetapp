@@ -1,7 +1,7 @@
 {
   "name": "ABEL Rhythm Alphabet",
   "short_name": "ABEL",
-  "description": "A rhythm alphabet and sequencer you can play with.",
+  "description": "A metronome and sequencer.",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
