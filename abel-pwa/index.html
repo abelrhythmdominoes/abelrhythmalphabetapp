@@ -1,0 +1,3160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>ABEL Rhythm Alphabet</title>
+<meta name="theme-color" content="#111827" />
+<link rel="manifest" href="manifest.webmanifest" />
+<link rel="icon" type="image/png" href="icons/icon-192.png" />
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-title" content="ABEL" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="description" content="ABEL Rhythm Alphabet – a rhythm alphabet and sequencer." />
+
+<script src="https://cdn.tailwindcss.com/3.4.17"></script>
+<style>
+  html, body, #root { min-height: 100%; margin: 0; }
+  body { background: #111827; }
+  #boot { color: #9ca3af; font-family: system-ui, sans-serif; padding: 2rem; text-align: center; }
+</style>
+</head>
+<body>
+<div id="root"><div id="boot">Loading…</div></div>
+
+<script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+<script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.24.7/babel.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/lucide@0.460.0/dist/umd/lucide.min.js"></script>
+
+<script>
+  // Settings (theme, haptics) were saved through window.storage in the artifact environment.
+  // On a normal website, back the same API with localStorage so those preferences still persist.
+  (function () {
+    if (window.storage) return;
+    window.storage = {
+      get: async function (key) {
+        try {
+          var v = localStorage.getItem(key);
+          return v === null ? null : { key: key, value: v };
+        } catch (e) { return null; }
+      },
+      set: async function (key, value) {
+        try { localStorage.setItem(key, value); } catch (e) {}
+        return { key: key, value: value };
+      }
+    };
+  })();
+</script>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useRef } = React;
+
+/* ---- Lucide icons (CDN build of "lucide" rendered as React components) ---- */
+const makeIcon = (name) => {
+  const Icon = ({ size = 24, color = 'currentColor', strokeWidth = 2, className, style, ...rest }) => {
+    const icons = (window.lucide && window.lucide.icons) || {};
+    const raw = icons[name] || [];
+    // lucide 0.4xx stores icons as ['svg', attrs, children]; older builds store just the children
+    const node = raw[0] === 'svg' ? (raw[2] || []) : raw;
+    return React.createElement(
+      'svg',
+      {
+        xmlns: 'http://www.w3.org/2000/svg',
+        width: size,
+        height: size,
+        viewBox: '0 0 24 24',
+        fill: 'none',
+        stroke: color,
+        strokeWidth,
+        strokeLinecap: 'round',
+        strokeLinejoin: 'round',
+        className,
+        style,
+        ...rest
+      },
+      node.map(([tag, attrs], i) => React.createElement(tag, { key: i, ...attrs }))
+    );
+  };
+  Icon.displayName = name;
+  return Icon;
+};
+const Play = makeIcon('Play');
+const Pause = makeIcon('Pause');
+const Info = makeIcon('Info');
+const Volume2 = makeIcon('Volume2');
+
+/* ---- App (unchanged from the artifact) ---- */
+/* =====================================================================
+   DATA
+   ===================================================================== */
+const INSTRUMENTS = {
+  snare: { name: '🥁 Snare Drum', description: 'Warm snare sound (default)' },
+  kick: { name: '🔊 Kick Drum', description: 'Deep bass drum' },
+  hihat: { name: '🎵 Hi-Hat', description: 'Crisp hi-hat sound' },
+  clap: { name: '👏 Clap', description: 'Hand clap percussion' },
+  cowbell: { name: '🔔 Cowbell', description: 'Classic cowbell' },
+  tom: { name: '🪘 Tom', description: 'Mid-range tom drum' },
+  rim: { name: '✨ Rim Shot', description: 'Sharp rim click' },
+  bass: { name: '🎸 Bass', description: 'Deep bass guitar note' }
+};
+
+const PATTERNS = {
+  primary: [
+    { letter: "A'", code: '–', binary: '0', color: '#2d2d2d' },
+    { letter: 'A', code: '•', binary: '1', color: '#4ade80' }
+  ],
+  binarySimple: [
+    { letter: "B'", code: '– –', binary: '00', color: '#2d2d2d' },
+    { letter: 'B', code: '• •', binary: '11', color: '#eab308' },
+    { letter: 'C', code: '• –', binary: '10', color: '#4ade80' },
+    { letter: 'D', code: '– •', binary: '01', color: '#ef4444' }
+  ],
+  ternary: [
+    { letter: "E'", code: '– – –', binary: '000', color: '#2d2d2d' },
+    { letter: 'E', code: '• • •', binary: '111', color: '#fff' },
+    { letter: 'F', code: '• – –', binary: '100', color: '#4ade80' },
+    { letter: 'G', code: '– • –', binary: '010', color: '#fff' },
+    { letter: 'H', code: '– – •', binary: '001', color: '#fff' },
+    { letter: 'I', code: '• • –', binary: '110', color: '#fff' },
+    { letter: 'J', code: '– • •', binary: '011', color: '#fff' },
+    { letter: 'K', code: '• – •', binary: '101', color: '#fff' }
+  ],
+  binaryAdvanced: [
+    { letter: "L'", code: '– – – –', binary: '0000', color: '#2d2d2d' },
+    { letter: 'L', code: '• • • •', binary: '1111', color: '#fff' },
+    { letter: 'M', code: '• – – –', binary: '1000', color: '#4ade80' },
+    { letter: 'N', code: '– • – –', binary: '0100', color: '#fff' },
+    { letter: 'O', code: '– – • –', binary: '0010', color: '#ef4444' },
+    { letter: 'P', code: '– – – •', binary: '0001', color: '#fff' },
+    { letter: 'Q', code: '• • – –', binary: '1100', color: '#fff' },
+    { letter: 'R', code: '– • • –', binary: '0110', color: '#fff' },
+    { letter: 'S', code: '– – • •', binary: '0011', color: '#fff' },
+    { letter: 'T', code: '• – – •', binary: '1001', color: '#fff' },
+    { letter: 'U', code: '• – • –', binary: '1010', color: '#eab308' },
+    { letter: 'V', code: '– • – •', binary: '0101', color: '#fff' },
+    { letter: 'W', code: '• • • –', binary: '1110', color: '#fff' },
+    { letter: 'X', code: '– • • •', binary: '0111', color: '#fff' },
+    { letter: 'Y', code: '• – • •', binary: '1011', color: '#fff' },
+    { letter: 'Z', code: '• • – •', binary: '1101', color: '#fff' }
+  ]
+};
+
+const CODE_GROUPS = [
+  { name: "A' - A", range: 'Primary Letters', n: 1, total: 2, patterns: PATTERNS.primary },
+  { name: "B' - D", range: 'Binary Letters (simple)', n: 2, total: 4, patterns: PATTERNS.binarySimple },
+  { name: "E' - K", range: 'Ternary Letters', n: 3, total: 8, patterns: PATTERNS.ternary },
+  { name: "L' - Z", range: 'Binary Letters (advanced)', n: 4, total: 16, patterns: PATTERNS.binaryAdvanced }
+];
+
+const MAX_LAYERS = 4;
+
+const buildFused = (list) => ({
+  letter: list.map((p) => p.letter).join(''),
+  code: list.map((p) => p.code).join(' '),
+  binary: list.map((p) => p.binary).join(''),
+  color: '#60a5fa',
+  parts: list
+});
+
+/* =====================================================================
+   VISUAL STYLES (animation states are driven by the audio clock)
+   ===================================================================== */
+const CSS = `
+.abel-step{transition:transform .12s ease-out,opacity .12s ease-out,box-shadow .15s ease-out,background-color .12s ease-out;will-change:transform,opacity}
+.abel-dot{border-radius:9999px;background:var(--c);opacity:.55}
+.abel-dash{border-radius:2px;background:var(--c);opacity:.4}
+.abel-step[data-state="hit"]{opacity:1;transform:scale(1.6);box-shadow:0 0 12px 3px var(--c)}
+.abel-dash[data-state="rest"]{opacity:.95;background:#e5e7eb;transform:scaleY(2.4);box-shadow:0 0 6px rgba(229,231,235,.55)}
+.abel-dash[data-state="ghost"]{opacity:.95;transform:scaleY(2.6);box-shadow:0 0 7px var(--c)}
+.abel-tile[data-active="1"]{box-shadow:0 0 0 2px rgba(255,255,255,.35),0 0 18px rgba(255,255,255,.15)}
+.abel-bar{height:2px;background:rgba(255,255,255,.08);border-radius:2px;overflow:hidden;margin-top:6px}
+.abel-bar>div{height:100%;width:100%;background:var(--c);transform-origin:left center;transform:scaleX(0)}
+.abel-beat{width:12px;height:12px;border-radius:9999px;background:#374151;transition:transform .12s ease-out,box-shadow .15s ease-out,background-color .12s ease-out}
+.abel-beat[data-state="on"]{background:#60a5fa;box-shadow:0 0 10px #60a5fa;transform:scale(1.25)}
+.abel-beat[data-state="down"]{background:#4ade80;box-shadow:0 0 12px #4ade80;transform:scale(1.4)}
+.abel-beat[data-muted="1"]{opacity:.5}
+`;
+
+const DIMS = {
+  sm: { dot: 8, dash: 10, dashH: 2, h: 18 },
+  md: { dot: 11, dash: 14, dashH: 2, h: 24 },
+  lg: { dot: 16, dash: 24, dashH: 3, h: 38 }
+};
+
+const POP = {
+  hit: [{ transform: 'scale(2.1)' }, { transform: 'scale(1.6)' }],
+  rest: [{ transform: 'scaleY(3.4)' }, { transform: 'scaleY(2.4)' }],
+  ghost: [{ transform: 'scaleY(3.8)' }, { transform: 'scaleY(2.6)' }]
+};
+
+// Light / dark theme switch (set by the main component on every render)
+const THEME = { light: false };
+
+// Colour used to draw a pattern: the "white" patterns and the dark prime patterns stay readable in both themes
+// Colour of the pattern LETTER labels (A, B', E ...): primes are light gray in both themes,
+// and the "white" patterns turn dark gray in light mode so they stay visible on a white background
+const labelColorFor = (c) => {
+  if (c === '#2d2d2d') return '#9ca3af';
+  if (c === '#fff') return THEME.light ? '#374151' : '#fff';
+  return c;
+};
+
+const accentFor = (c) => {
+  if (c === '#2d2d2d') return THEME.light ? '#6b7280' : '#9ca3af';
+  if (c === '#fff') return THEME.light ? '#111827' : '#fff';
+  return c;
+};
+
+// Light theme: overrides scoped to .abel-light, so the default dark theme is untouched
+const LIGHT_CSS = String.raw`
+.abel-light{color-scheme:light}
+.abel-light .bg-gray-900{background-color:#ffffff}
+.abel-light .bg-gray-800{background-color:#ffffff;box-shadow:0 0 0 1px rgba(0,0,0,.07)}
+.abel-light .bg-gray-700{background-color:#e5e7eb}
+.abel-light .bg-gray-600{background-color:#cbd5e1}
+.abel-light .hover\:bg-gray-700:hover{background-color:#d1d5db}
+.abel-light .hover\:bg-gray-600:hover{background-color:#cbd5e1}
+.abel-light .hover\:border-gray-500:hover{border-color:#9ca3af}
+.abel-light .bg-gray-800\/50{background-color:rgba(0,0,0,.04)}
+.abel-light .bg-gray-900\/50{background-color:rgba(0,0,0,.05)}
+.abel-light .bg-purple-900\/30{background-color:rgba(168,85,247,.10)}
+.abel-light .bg-emerald-900\/30{background-color:rgba(16,185,129,.12)}
+.abel-light .bg-blue-900\/30{background-color:rgba(59,130,246,.10)}
+.abel-light .bg-blue-950\/50{background-color:rgba(59,130,246,.10)}
+.abel-light .bg-blue-950{background-color:#dbeafe}
+.abel-light .text-white{color:#111827}
+.abel-light .text-gray-300{color:#374151}
+.abel-light .text-gray-400{color:#4b5563}
+.abel-light .text-gray-500{color:#6b7280}
+.abel-light .hover\:text-gray-200:hover{color:#111827}
+.abel-light .text-blue-300{color:#1d4ed8}
+.abel-light .text-blue-400{color:#2563eb}
+.abel-light .hover\:text-blue-300:hover{color:#1e40af}
+.abel-light .text-amber-300{color:#b45309}
+.abel-light .text-green-400{color:#16a34a}
+.abel-light .text-yellow-400{color:#ca8a04}
+.abel-light .border-gray-600{border-color:#d1d5db}
+.abel-light .border-gray-700{border-color:#e5e7eb}
+.abel-light [class*="bg-blue-600"],.abel-light [class*="bg-blue-700"],.abel-light [class*="bg-purple-600"],.abel-light [class*="bg-purple-700"],.abel-light [class*="bg-red-500"],.abel-light [class*="bg-red-600"],.abel-light [class*="bg-green-500"],.abel-light [class*="bg-green-600"],.abel-light [class*="bg-emerald-500"],.abel-light [class*="bg-emerald-600"],.abel-light [class*="bg-emerald-700"]{color:#ffffff}
+.abel-light [style*="color: rgb(255, 255, 255)"]{color:#111827}
+.abel-light [style*="background: rgb(255, 255, 255)"]{background:#7e22ce !important}
+.abel-light [style*="background: rgba(255, 255, 255, 0.22)"]{background:rgba(0,0,0,.25) !important}
+.abel-light .abel-dash[data-state="rest"]{background:#374151;box-shadow:0 0 6px rgba(55,65,81,.5)}
+.abel-light .abel-tile[data-active="1"]{box-shadow:0 0 0 2px rgba(0,0,0,.25),0 0 18px rgba(0,0,0,.12)}
+.abel-light .abel-bar{background:rgba(0,0,0,.08)}
+.abel-light .abel-beat:not([data-state]){background:#d1d5db}
+.abel-light .abel-n-line{stroke:#6b7280}
+.abel-light .abel-n-text{fill:#6b7280}
+.abel-light .abel-n-step[data-state="rest"]{filter:drop-shadow(0 0 4px #374151)}
+.abel-light .abel-n-step[data-state="rest"] .abel-n-stroke{stroke:#374151}
+.abel-light .abel-n-step[data-state="rest"] .abel-n-fill{fill:#374151}
+.abel-light .abel-pie-on{stroke:#ffffff}
+.abel-light .abel-pie-off{stroke:#374151}
+.abel-light .abel-pie-off[data-state="rest"]{fill:rgba(55,65,81,.25);stroke:#111827}
+.abel-light .abel-pie-off[data-state="ghost"]{stroke:#111827}
+.abel-light line[stroke="#ffffff"]{stroke:#111827}
+.abel-light path[fill="rgba(255,255,255,0.10)"]{fill:rgba(0,0,0,.08)}
+`;
+
+const setStepState = (entry, i, state, popMs = 0) => {
+  const el = entry && entry.steps[i];
+  if (!el) return;
+  if (state === 'idle') {
+    el.removeAttribute('data-state');
+    return;
+  }
+  el.setAttribute('data-state', state);
+  if (popMs && el.animate) {
+    try {
+      el.animate(
+        (el.hasAttribute('data-pie') ? POP_PIE : el.hasAttribute('data-n') ? POP_N : POP)[state],
+        { duration: popMs, easing: 'ease-out' }
+      );
+    } catch (e) {
+      /* ignore */
+    }
+  }
+};
+
+const setTileActive = (entry, on) => {
+  if (!entry || !entry.tile) return;
+  if (on) entry.tile.setAttribute('data-active', '1');
+  else entry.tile.removeAttribute('data-active');
+};
+
+/* =====================================================================
+   PATTERN VIEW – one animated row of dots / dashes
+   (registers itself so the audio-clock animator can drive it directly)
+   ===================================================================== */
+/* ---------- Notation mode: patterns drawn as music notation (1 beat = 1 quarter note) ---------- */
+// Module-level switch, set by the main component on every render
+const NOTATION = { on: false, ghost: false };
+
+// Pop animations for notation glyphs (uniform scale only, so rests are never stretched)
+const POP_N = {
+  hit: [{ transform: 'scale(1.8)' }, { transform: 'scale(1.35)' }],
+  rest: [{ transform: 'scale(1.5)' }, { transform: 'scale(1.2)' }],
+  ghost: [{ transform: 'scale(1.5)' }, { transform: 'scale(1.2)' }]
+};
+
+const NOTATION_CSS = `
+.abel-n-fill{fill:var(--c)}
+.abel-n-stroke{stroke:var(--c);fill:none;stroke-linecap:round;stroke-linejoin:round}
+.abel-n-stem{stroke:var(--c);opacity:.85}
+.abel-n-line{stroke:#9ca3af;fill:none;stroke-width:1.2}
+.abel-n-text{fill:#9ca3af;stroke:none}
+.abel-n-step{transform-box:fill-box;transform-origin:center;opacity:.8;transition:transform .12s ease-out,opacity .12s ease-out,filter .15s ease-out}
+.abel-n-ghost{opacity:.55}
+.abel-n-step[data-state="hit"]{opacity:1;transform:scale(1.35);filter:drop-shadow(0 0 5px var(--c))}
+.abel-n-step[data-state="rest"]{opacity:1;transform:scale(1.2);filter:drop-shadow(0 0 4px #e5e7eb)}
+.abel-n-step[data-state="rest"] .abel-n-stroke{stroke:#e5e7eb}
+.abel-n-step[data-state="rest"] .abel-n-fill{fill:#e5e7eb}
+.abel-n-step[data-state="ghost"]{opacity:1;transform:scale(1.2);filter:drop-shadow(0 0 5px var(--c))}
+`;
+
+// Rests: quarter rest (squiggle) or flagged rests (eighth, 16th, 32nd...), centred on (cx, cy)
+const NotationRest = ({ cx, cy, s, f }) => {
+  const tr = `translate(${cx} ${cy}) scale(${s})`;
+  if (f === 0) {
+    return (
+      <g transform={tr}>
+        <path d="M-2 -10 L3 -4 L-2 1 L2 6 C-4 5 -5 10 0 12" className="abel-n-stroke" strokeWidth="2" />
+      </g>
+    );
+  }
+  const h = 9 + 5 * f;
+  const y0 = -h / 2;
+  const y1 = h / 2;
+  const xs = (y) => 2.5 - 5 * ((y - y0) / (y1 - y0));
+  const flags = [];
+  for (let k = 0; k < f; k++) {
+    const yk = y0 + 3 + 5 * k;
+    const fx = xs(yk) - 3.4;
+    flags.push(
+      <g key={k}>
+        <circle cx={fx} cy={yk} r="1.9" className="abel-n-fill" />
+        <path
+          d={`M${fx + 1.3} ${yk + 1.3} Q${xs(yk) - 1} ${yk + 3.2} ${xs(yk + 3.2)} ${yk + 3.2}`}
+          className="abel-n-stroke"
+          strokeWidth="1.4"
+        />
+      </g>
+    );
+  }
+  return (
+    <g transform={tr}>
+      <line x1={xs(y0)} y1={y0} x2={xs(y1)} y2={y1} className="abel-n-stroke" strokeWidth="1.8" />
+      {flags}
+    </g>
+  );
+};
+
+// One beat = one quarter note. n steps per beat:
+// n=1 quarter, n=2 eighths, n=3 eighth triplet, n=4 sixteenths, n=5/6/7 sixteenth tuplets, n=8 thirty-seconds...
+// (flags = floor(log2 n); any n that is not a power of 2 gets a tuplet bracket)
+function NotationView({ viewId, pattern, registry, size = 'md', bar = true, ghostNotes = false }) {
+  const rootRef = useRef(null);
+  const [w, setW] = useState(0);
+  const symbols = pattern.code.split(' ');
+  const n = symbols.length;
+  const accent = accentFor(pattern.color);
+
+  // inject the notation CSS once
+  useEffect(() => {
+    if (!document.getElementById('abel-notation-css')) {
+      const st = document.createElement('style');
+      st.id = 'abel-notation-css';
+      st.textContent = NOTATION_CSS;
+      document.head.appendChild(st);
+    }
+  }, []);
+
+  // match the drawing to the real width of its container (so the playhead lines up)
+  React.useLayoutEffect(() => {
+    const el = rootRef.current;
+    if (!el) return undefined;
+    const update = () => setW(el.clientWidth);
+    update();
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  // register the glyphs so the audio-clock animator can light them up
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return undefined;
+    const entry = {
+      steps: Array.from(root.querySelectorAll('[data-step]')),
+      bar: root.querySelector('[data-bar]'),
+      tile: root.closest('[data-tile]')
+    };
+    registry.current.set(viewId, entry);
+    return () => {
+      if (registry.current.get(viewId) === entry) registry.current.delete(viewId);
+      entry.steps.forEach((el) => el.removeAttribute('data-state'));
+      if (entry.bar) entry.bar.style.transform = 'scaleX(0)';
+      if (entry.tile) entry.tile.removeAttribute('data-active');
+    };
+  }, [viewId, pattern, registry, ghostNotes]);
+
+  const S = { sm: 0.7, md: 0.9, lg: 1.25 }[size] || 0.9;
+  const W = w || n * 24;
+  const H = 52 * S;
+  const slot = W / n;
+  const noteY = 42 * S;
+  const stemTop = 16 * S;
+  const rx = 4.4 * S;
+  const ry = 3.3 * S;
+  const f = Math.floor(Math.log2(n)); // number of flags / beams
+  const isTuplet = (n & (n - 1)) !== 0;
+  const sound = symbols.map((sy) => sy === '•');
+  const isNote = sound.map((s) => s || ghostNotes); // dashes are ghost notes or rests
+  const cx = (i) => (i + 0.5) * slot;
+  const stemX = (i) => cx(i) + rx - 0.7 * S;
+
+  // consecutive notes are beamed together; a lone note gets flags; rests break the beam
+  const runs = [];
+  for (let i = 0; i < n; ) {
+    if (isNote[i]) {
+      let j = i;
+      while (j + 1 < n && isNote[j + 1]) j++;
+      runs.push([i, j]);
+      i = j + 1;
+    } else {
+      i++;
+    }
+  }
+
+  const beams = [];
+  const flags = [];
+  if (f >= 1) {
+    runs.forEach(([a, b]) => {
+      if (b > a) {
+        for (let k = 0; k < f; k++) {
+          beams.push(
+            <rect
+              key={`beam-${a}-${k}`}
+              x={stemX(a) - 0.7 * S}
+              y={stemTop + k * 5 * S}
+              width={stemX(b) - stemX(a) + 1.4 * S}
+              height={3.2 * S}
+              rx={0.8}
+              className="abel-n-fill"
+            />
+          );
+        }
+      } else {
+        for (let k = 0; k < f; k++) {
+          const y0 = stemTop + k * 5 * S;
+          const sx = stemX(a);
+          flags.push(
+            <path
+              key={`flag-${a}-${k}`}
+              d={`M${sx} ${y0} C${sx} ${y0 + 5 * S} ${sx + 8 * S} ${y0 + 6 * S} ${sx + 6 * S} ${y0 + 13 * S}`}
+              className="abel-n-stroke"
+              strokeWidth={1.8 * S}
+            />
+          );
+        }
+      }
+    });
+  }
+
+  const bx1 = cx(0) - rx;
+  const bx2 = cx(n - 1) + rx + 0.5;
+  const by = 8 * S;
+  const bmid = (bx1 + bx2) / 2;
+  const bgap = 7 * S;
+
+  return (
+    <div ref={rootRef} className="w-full" style={{ '--c': accent }}>
+      <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{ display: 'block', overflow: 'visible' }}>
+        {/* one-line percussion staff */}
+        <line x1="0" y1={noteY} x2={W} y2={noteY} stroke="#4b5563" strokeWidth="1" />
+
+        {/* stems, beams, flags */}
+        {symbols.map((_, i) =>
+          isNote[i] ? (
+            <line
+              key={`stem-${i}`}
+              x1={stemX(i)}
+              y1={noteY - 0.5 * S}
+              x2={stemX(i)}
+              y2={stemTop}
+              className="abel-n-stem"
+              strokeWidth={1.3 * S}
+            />
+          ) : null
+        )}
+        {beams}
+        {flags}
+
+        {/* tuplet bracket + number */}
+        {isTuplet && (
+          <g className="abel-n-line">
+            <path d={`M${bx1} ${by + 4 * S} L${bx1} ${by} L${bmid - bgap} ${by}`} />
+            <path d={`M${bmid + bgap} ${by} L${bx2} ${by} L${bx2} ${by + 4 * S}`} />
+            <text
+              x={bmid}
+              y={by + 3.6 * S}
+              textAnchor="middle"
+              fontSize={10 * S}
+              fontStyle="italic"
+              fontWeight="700"
+              className="abel-n-text"
+            >
+              {n}
+            </text>
+          </g>
+        )}
+
+        {/* noteheads / ghost notes / rests (one animated glyph per step) */}
+        {symbols.map((_, i) => {
+          const x = cx(i);
+          if (sound[i]) {
+            return (
+              <g key={`g-${i}`} data-step data-n="1" className="abel-n-step">
+                <ellipse cx={x} cy={noteY} rx={rx} ry={ry} transform={`rotate(-20 ${x} ${noteY})`} className="abel-n-fill" />
+              </g>
+            );
+          }
+          if (ghostNotes) {
+            const pl = x - rx - 3.2 * S;
+            const pr = x + rx + 3.2 * S;
+            return (
+              <g key={`g-${i}`} data-step data-n="1" className="abel-n-step abel-n-ghost">
+                <ellipse cx={x} cy={noteY} rx={rx} ry={ry} transform={`rotate(-20 ${x} ${noteY})`} className="abel-n-fill" />
+                <path
+                  d={`M${pl + 2 * S} ${noteY - 5 * S} Q${pl - 1.5 * S} ${noteY} ${pl + 2 * S} ${noteY + 5 * S}`}
+                  className="abel-n-stroke"
+                  strokeWidth={1.2 * S}
+                />
+                <path
+                  d={`M${pr - 2 * S} ${noteY - 5 * S} Q${pr + 1.5 * S} ${noteY} ${pr - 2 * S} ${noteY + 5 * S}`}
+                  className="abel-n-stroke"
+                  strokeWidth={1.2 * S}
+                />
+              </g>
+            );
+          }
+          return (
+            <g key={`g-${i}`} data-step data-n="1" className="abel-n-step">
+              <NotationRest cx={x} cy={noteY} s={S} f={f} />
+            </g>
+          );
+        })}
+      </svg>
+      {bar && (
+        <div className="abel-bar">
+          <div data-bar />
+        </div>
+      )}
+    </div>
+  );
+};
+
+/* ---------- Pie mode: each pattern is a circle, one beat = one full clockwise turn ---------- */
+// Slice 0 starts at 12 o'clock and the slices follow clockwise: a filled slice is a note, an empty one a rest.
+const PIE_CSS = `
+.abel-pie{transition:fill .12s ease-out,filter .15s ease-out,opacity .12s ease-out}
+.abel-pie-on{fill:var(--c);stroke:#111827;stroke-width:2;stroke-linejoin:round}
+.abel-pie-off{fill:rgba(255,255,255,0);stroke:var(--so);stroke-width:1.6;stroke-linejoin:round}
+.abel-pie-on[data-state="hit"]{filter:drop-shadow(0 0 6px var(--c)) brightness(1.3)}
+.abel-pie-off[data-state="rest"]{fill:rgba(229,231,235,.4);stroke:#fff}
+.abel-pie-off[data-state="ghost"]{fill:var(--c);fill-opacity:.4;stroke:#fff}
+`;
+
+// Pop animation for pie slices (a quick flash, no scaling)
+const POP_PIE = {
+  hit: [{ opacity: 0.35 }, { opacity: 1 }],
+  rest: [{ opacity: 0.5 }, { opacity: 1 }],
+  ghost: [{ opacity: 0.5 }, { opacity: 1 }]
+};
+
+const PIE_R = 44;
+
+function pieSlicePath(i, n) {
+  const a0 = (i * 2 * Math.PI) / n;
+  const a1 = ((i + 1) * 2 * Math.PI) / n;
+  const x0 = 50 + PIE_R * Math.sin(a0);
+  const y0 = 50 - PIE_R * Math.cos(a0);
+  const x1 = 50 + PIE_R * Math.sin(a1);
+  const y1 = 50 - PIE_R * Math.cos(a1);
+  const large = a1 - a0 > Math.PI ? 1 : 0;
+  return `M50 50 L${x0.toFixed(2)} ${y0.toFixed(2)} A${PIE_R} ${PIE_R} 0 ${large} 1 ${x1.toFixed(2)} ${y1.toFixed(2)} Z`;
+}
+
+// The part of the circle already swept by the hand (angle in degrees, clockwise from 12 o'clock)
+function pieSweepPath(deg) {
+  if (deg <= 0.1) return '';
+  if (deg >= 359.9) {
+    return `M50 ${50 - PIE_R} A${PIE_R} ${PIE_R} 0 1 1 50 ${50 + PIE_R} A${PIE_R} ${PIE_R} 0 1 1 50 ${50 - PIE_R} Z`;
+  }
+  const r = (deg * Math.PI) / 180;
+  const x = 50 + PIE_R * Math.sin(r);
+  const y = 50 - PIE_R * Math.cos(r);
+  return `M50 50 L50 ${50 - PIE_R} A${PIE_R} ${PIE_R} 0 ${deg > 180 ? 1 : 0} 1 ${x.toFixed(2)} ${y.toFixed(2)} Z`;
+}
+
+function PieView({ viewId, pattern, registry, size = 'md', bar = true }) {
+  const rootRef = useRef(null);
+  const handRef = useRef(null);
+  const sweepRef = useRef(null);
+  const symbols = pattern.code.split(' ');
+  const n = symbols.length;
+  const accent = accentFor(pattern.color);
+  const anySound = symbols.some((sy) => sy === '•');
+  const outline = anySound ? '#ffffff' : '#9ca3af';
+  const maxPx = { sm: 56, md: 72, lg: 120 }[size] || 72;
+
+  // inject the pie CSS once
+  useEffect(() => {
+    if (!document.getElementById('abel-pie-css')) {
+      const st = document.createElement('style');
+      st.id = 'abel-pie-css';
+      st.textContent = PIE_CSS;
+      document.head.appendChild(st);
+    }
+  }, []);
+
+  // register the slices; the playhead (hand + swept area) is driven through a small "bar" adapter,
+  // so the audio-clock animator moves it exactly like the progress bar of the other views
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return undefined;
+    const progress = (p) => {
+      const deg = Math.max(0, Math.min(1, p)) * 360;
+      if (handRef.current) {
+        handRef.current.setAttribute('transform', `rotate(${deg.toFixed(2)} 50 50)`);
+        handRef.current.style.opacity = deg > 0.1 ? '1' : '0';
+      }
+      if (sweepRef.current) sweepRef.current.setAttribute('d', pieSweepPath(deg));
+    };
+    const barAdapter = {
+      style: {
+        set transform(v) {
+          const m = /scaleX\(([-0-9.e]+)\)/.exec(v);
+          progress(m ? parseFloat(m[1]) : 0);
+        }
+      }
+    };
+    const entry = {
+      steps: Array.from(root.querySelectorAll('[data-step]')),
+      bar: bar ? barAdapter : null,
+      tile: root.closest('[data-tile]')
+    };
+    registry.current.set(viewId, entry);
+    return () => {
+      if (registry.current.get(viewId) === entry) registry.current.delete(viewId);
+      entry.steps.forEach((el) => el.removeAttribute('data-state'));
+      progress(0);
+      if (entry.tile) entry.tile.removeAttribute('data-active');
+    };
+  }, [viewId, pattern, registry, bar]);
+
+  return (
+    <div ref={rootRef} className="w-full" style={{ '--c': accent, '--so': outline }}>
+      <svg
+        viewBox="0 0 100 100"
+        style={{ display: 'block', width: '100%', maxWidth: maxPx, margin: '0 auto', overflow: 'visible' }}
+      >
+        {symbols.map((sy, i) => {
+          const cls = 'abel-pie ' + (sy === '•' ? 'abel-pie-on' : 'abel-pie-off');
+          if (n === 1) {
+            return <circle key={i} data-step data-pie="1" className={cls} cx="50" cy="50" r={PIE_R} />;
+          }
+          return <path key={i} data-step data-pie="1" className={cls} d={pieSlicePath(i, n)} />;
+        })}
+        {bar && (
+          <g style={{ pointerEvents: 'none' }}>
+            <path ref={sweepRef} d="" fill="rgba(255,255,255,0.10)" stroke="none" />
+            <line
+              ref={handRef}
+              x1="50"
+              y1="50"
+              x2="50"
+              y2={50 - PIE_R}
+              stroke="#ffffff"
+              strokeWidth="2.2"
+              strokeLinecap="round"
+              style={{ opacity: 0 }}
+            />
+          </g>
+        )}
+      </svg>
+    </div>
+  );
+}
+
+// Every view goes through this switch: dots and dashes, music notation, or pie
+function PatternView(props) {
+  if (NOTATION.pie) return <PieView {...props} />;
+  if (NOTATION.on) return <NotationView {...props} ghostNotes={NOTATION.ghost} />;
+  return <DotsView {...props} />;
+}
+
+const DotsView = ({ viewId, pattern, registry, size = 'md', bar = true }) => {
+  const rootRef = useRef(null);
+  const symbols = pattern.code.split(' ');
+  const n = symbols.length;
+  const d = DIMS[size];
+  const accent = accentFor(pattern.color);
+
+  const bounds = [];
+  if (pattern.parts) {
+    let acc = 0;
+    pattern.parts.forEach((p, i) => {
+      if (i > 0) bounds.push(acc);
+      acc += p.code.split(' ').length;
+    });
+  }
+
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return undefined;
+    const entry = {
+      steps: Array.from(root.querySelectorAll('[data-step]')),
+      bar: root.querySelector('[data-bar]'),
+      tile: root.closest('[data-tile]')
+    };
+    registry.current.set(viewId, entry);
+    return () => {
+      if (registry.current.get(viewId) === entry) registry.current.delete(viewId);
+      entry.steps.forEach((el) => el.removeAttribute('data-state'));
+      if (entry.bar) entry.bar.style.transform = 'scaleX(0)';
+      if (entry.tile) entry.tile.removeAttribute('data-active');
+    };
+  }, [viewId, pattern, registry]);
+
+  return (
+    <div ref={rootRef} className="w-full" style={{ '--c': accent }}>
+      <div style={{ position: 'relative', display: 'flex', width: '100%' }}>
+        {symbols.map((sy, i) => (
+          <div
+            key={i}
+            style={{
+              flex: '1 1 0',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              height: d.h
+            }}
+          >
+            {sy === '•' ? (
+              <div data-step className="abel-step abel-dot" style={{ width: d.dot, height: d.dot }} />
+            ) : (
+              <div data-step className="abel-step abel-dash" style={{ width: d.dash, height: d.dashH }} />
+            )}
+          </div>
+        ))}
+        {bounds.map((b) => (
+          <div
+            key={b}
+            style={{
+              position: 'absolute',
+              top: 4,
+              bottom: 4,
+              left: `${(b / n) * 100}%`,
+              width: 1,
+              background: 'rgba(255,255,255,0.22)'
+            }}
+          />
+        ))}
+      </div>
+      {bar && (
+        <div className="abel-bar">
+          <div data-bar />
+        </div>
+      )}
+    </div>
+  );
+};
+
+/* =====================================================================
+   DOMINO CARD
+   ===================================================================== */
+const DominoCard = ({
+  pattern,
+  onClick,
+  isSelected,
+  isInSequence,
+  isInFusion,
+  isInLayer,
+  isSequenceMode,
+  isFusionMode,
+  isLayerMode,
+  isMergeSource,
+  onLongPress,
+  registry
+}) => {
+  const pressRef = useRef({ timer: null, fired: false, x: 0, y: 0 });
+
+  const clearPress = () => {
+    clearTimeout(pressRef.current.timer);
+    pressRef.current.timer = null;
+  };
+  const handleDown = (e) => {
+    pressRef.current.fired = false;
+    if (!onLongPress) return;
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    clearPress();
+    pressRef.current.x = e.clientX;
+    pressRef.current.y = e.clientY;
+    pressRef.current.timer = setTimeout(() => {
+      pressRef.current.timer = null;
+      pressRef.current.fired = true;
+      onLongPress();
+    }, 450);
+  };
+  const handleMove = (e) => {
+    const p = pressRef.current;
+    if (p.timer && Math.hypot(e.clientX - p.x, e.clientY - p.y) > 10) clearPress(); // finger is scrolling
+  };
+  const handleClick = (e) => {
+    if (pressRef.current.fired) {
+      pressRef.current.fired = false; // the click that ends a long-press is not a tap
+      return;
+    }
+    onClick(e);
+  };
+
+  return (
+    <button
+      data-tile
+      onClick={handleClick}
+      onPointerDown={handleDown}
+      onPointerMove={handleMove}
+      onPointerUp={clearPress}
+      onPointerLeave={clearPress}
+      onPointerCancel={clearPress}
+      onContextMenu={(e) => e.preventDefault()}
+      className={`abel-tile select-none relative flex flex-col items-center justify-center p-3 rounded-lg transition-all border-2 ${
+        isMergeSource
+          ? 'border-amber-400 bg-gray-700 scale-105'
+          : isSelected
+          ? 'border-blue-500 bg-gray-700 scale-105'
+          : isFusionMode && isInFusion
+          ? 'border-blue-400 bg-gray-700'
+          : isSequenceMode && isInSequence
+          ? 'border-purple-400 bg-gray-700'
+          : isLayerMode && isInLayer
+          ? 'border-emerald-400 bg-gray-700'
+          : 'border-gray-600 bg-gray-800 hover:bg-gray-700 hover:border-gray-500'
+      }`}
+      style={{ minWidth: '80px' }}
+    >
+      <div className="text-xs font-bold mb-2" style={{ color: labelColorFor(pattern.color) }}>
+        {pattern.letter}
+      </div>
+      <PatternView viewId={`grid:${pattern.letter}`} pattern={pattern} registry={registry} size="md" />
+      <div className="text-xs text-gray-500 mt-2 font-mono">{pattern.binary}</div>
+    </button>
+  );
+};
+
+/* =====================================================================
+   AUDIO – synthesised instruments (all routed to a master gain so that
+   Stop silences everything instantly, even notes already scheduled)
+   ===================================================================== */
+const makeNoise = (ctx, dur) => {
+  const buf = ctx.createBuffer(1, Math.max(1, Math.floor(ctx.sampleRate * dur)), ctx.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+  const src = ctx.createBufferSource();
+  src.buffer = buf;
+  return src;
+};
+
+const playSnare = (ctx, time, vol, dest) => {
+  const osc1 = ctx.createOscillator();
+  const osc2 = ctx.createOscillator();
+  osc1.frequency.value = 180;
+  osc2.frequency.value = 330;
+  osc1.type = 'triangle';
+  osc2.type = 'triangle';
+  const og = ctx.createGain();
+  og.gain.setValueAtTime(0, time);
+  og.gain.linearRampToValueAtTime(0.25 * vol, time + 0.001);
+  og.gain.exponentialRampToValueAtTime(0.001, time + 0.08);
+  osc1.connect(og);
+  osc2.connect(og);
+  og.connect(dest);
+
+  const noise = makeNoise(ctx, 0.15);
+  const f = ctx.createBiquadFilter();
+  f.type = 'highpass';
+  f.frequency.value = 2000;
+  f.Q.value = 1;
+  const ng = ctx.createGain();
+  ng.gain.setValueAtTime(0, time);
+  ng.gain.linearRampToValueAtTime(0.35 * vol, time + 0.001);
+  ng.gain.exponentialRampToValueAtTime(0.001, time + 0.12);
+  noise.connect(f);
+  f.connect(ng);
+  ng.connect(dest);
+
+  osc1.start(time);
+  osc1.stop(time + 0.08);
+  osc2.start(time);
+  osc2.stop(time + 0.08);
+  noise.start(time);
+  noise.stop(time + 0.15);
+};
+
+const playKick = (ctx, time, vol, dest) => {
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.frequency.setValueAtTime(150, time);
+  osc.frequency.exponentialRampToValueAtTime(40, time + 0.1);
+  gain.gain.setValueAtTime(0.8 * vol, time);
+  gain.gain.exponentialRampToValueAtTime(0.001, time + 0.3);
+  osc.connect(gain);
+  gain.connect(dest);
+  osc.start(time);
+  osc.stop(time + 0.3);
+};
+
+const playHiHat = (ctx, time, vol, dest) => {
+  const noise = makeNoise(ctx, 0.1);
+  const filter = ctx.createBiquadFilter();
+  filter.type = 'highpass';
+  filter.frequency.value = 7000;
+  const gain = ctx.createGain();
+  gain.gain.setValueAtTime(0.3 * vol, time);
+  gain.gain.exponentialRampToValueAtTime(0.001, time + 0.05);
+  noise.connect(filter);
+  filter.connect(gain);
+  gain.connect(dest);
+  noise.start(time);
+  noise.stop(time + 0.1);
+};
+
+const playClap = (ctx, time, vol, dest) => {
+  for (let i = 0; i < 3; i++) {
+    const noise = makeNoise(ctx, 0.08);
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.value = 1500;
+    filter.Q.value = 2;
+    const gain = ctx.createGain();
+    const t = time + i * 0.01;
+    gain.gain.setValueAtTime(0.25 * vol, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.08);
+    noise.connect(filter);
+    filter.connect(gain);
+    gain.connect(dest);
+    noise.start(t);
+    noise.stop(t + 0.08);
+  }
+};
+
+const playCowbell = (ctx, time, vol, dest) => {
+  const osc1 = ctx.createOscillator();
+  const osc2 = ctx.createOscillator();
+  osc1.frequency.value = 540;
+  osc2.frequency.value = 800;
+  osc1.type = 'square';
+  osc2.type = 'square';
+  const gain = ctx.createGain();
+  gain.gain.setValueAtTime(0.3 * vol, time);
+  gain.gain.exponentialRampToValueAtTime(0.001, time + 0.15);
+  osc1.connect(gain);
+  osc2.connect(gain);
+  gain.connect(dest);
+  osc1.start(time);
+  osc1.stop(time + 0.15);
+  osc2.start(time);
+  osc2.stop(time + 0.15);
+};
+
+const playTom = (ctx, time, vol, dest) => {
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.frequency.setValueAtTime(220, time);
+  osc.frequency.exponentialRampToValueAtTime(110, time + 0.15);
+  osc.type = 'sine';
+  gain.gain.setValueAtTime(0.5 * vol, time);
+  gain.gain.exponentialRampToValueAtTime(0.001, time + 0.2);
+  osc.connect(gain);
+  gain.connect(dest);
+  osc.start(time);
+  osc.stop(time + 0.2);
+};
+
+const playRimShot = (ctx, time, vol, dest) => {
+  const osc = ctx.createOscillator();
+  osc.frequency.value = 400;
+  osc.type = 'square';
+  const noise = makeNoise(ctx, 0.02);
+  const oscGain = ctx.createGain();
+  const noiseGain = ctx.createGain();
+  oscGain.gain.setValueAtTime(0.2 * vol, time);
+  oscGain.gain.exponentialRampToValueAtTime(0.001, time + 0.02);
+  noiseGain.gain.setValueAtTime(0.4 * vol, time);
+  noiseGain.gain.exponentialRampToValueAtTime(0.001, time + 0.015);
+  osc.connect(oscGain);
+  oscGain.connect(dest);
+  noise.connect(noiseGain);
+  noiseGain.connect(dest);
+  osc.start(time);
+  osc.stop(time + 0.02);
+  noise.start(time);
+  noise.stop(time + 0.02);
+};
+
+const playBass = (ctx, time, vol, dest) => {
+  const fundamental = ctx.createOscillator();
+  const harmonic1 = ctx.createOscillator();
+  const harmonic2 = ctx.createOscillator();
+  fundamental.frequency.value = 41.2;
+  harmonic1.frequency.value = 82.4;
+  harmonic2.frequency.value = 123.6;
+  fundamental.type = 'sine';
+  harmonic1.type = 'sine';
+  harmonic2.type = 'sine';
+
+  const filter = ctx.createBiquadFilter();
+  filter.type = 'lowpass';
+  filter.frequency.value = 600;
+  filter.Q.value = 1;
+
+  const fg = ctx.createGain();
+  const h1g = ctx.createGain();
+  const h2g = ctx.createGain();
+  const master = ctx.createGain();
+
+  fg.gain.setValueAtTime(0, time);
+  fg.gain.linearRampToValueAtTime(0.5 * vol, time + 0.01);
+  fg.gain.linearRampToValueAtTime(0.35 * vol, time + 0.05);
+  fg.gain.setValueAtTime(0.35 * vol, time + 0.2);
+  fg.gain.exponentialRampToValueAtTime(0.001, time + 0.4);
+
+  h1g.gain.setValueAtTime(0, time);
+  h1g.gain.linearRampToValueAtTime(0.2 * vol, time + 0.01);
+  h1g.gain.exponentialRampToValueAtTime(0.001, time + 0.35);
+
+  h2g.gain.setValueAtTime(0, time);
+  h2g.gain.linearRampToValueAtTime(0.1 * vol, time + 0.01);
+  h2g.gain.exponentialRampToValueAtTime(0.001, time + 0.3);
+
+  master.gain.value = 0.6;
+
+  fundamental.connect(fg);
+  harmonic1.connect(h1g);
+  harmonic2.connect(h2g);
+  fg.connect(filter);
+  h1g.connect(filter);
+  h2g.connect(filter);
+  filter.connect(master);
+  master.connect(dest);
+
+  fundamental.start(time);
+  fundamental.stop(time + 0.4);
+  harmonic1.start(time);
+  harmonic1.stop(time + 0.35);
+  harmonic2.start(time);
+  harmonic2.stop(time + 0.3);
+};
+
+const INSTRUMENT_FN = {
+  snare: playSnare,
+  kick: playKick,
+  hihat: playHiHat,
+  clap: playClap,
+  cowbell: playCowbell,
+  tom: playTom,
+  rim: playRimShot,
+  bass: playBass
+};
+
+// Every instrument is rendered ONCE (same synth, rendered offline into a buffer) so that each
+// hit is identical: same pitch sweep, same level, same noise, and much lighter on the CPU.
+const renderSamples = async (ctx) => {
+  const OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+  if (!OAC) return null;
+  const out = {};
+  try {
+    for (const key of Object.keys(INSTRUMENT_FN)) {
+      const off = new OAC(1, Math.ceil(ctx.sampleRate * 0.5), ctx.sampleRate);
+      INSTRUMENT_FN[key](off, 0, 1, off.destination);
+      out[key] = await off.startRendering();
+    }
+  } catch (e) {
+    return null; // fall back to live synthesis
+  }
+  return out;
+};
+
+const CHOKE_TIME = 0.004;
+
+const playInstrument = (ctx, time, instrument, isGhost, dest, samples, voices, lane) => {
+  const vol = isGhost ? 0.1 : 1;
+  const buf = samples && samples[instrument];
+  if (!buf) {
+    // samples not ready (or unsupported): live synthesis
+    (INSTRUMENT_FN[instrument] || playSnare)(ctx, time, vol, dest);
+    return;
+  }
+
+  const src = ctx.createBufferSource();
+  src.buffer = buf;
+  const gain = ctx.createGain();
+  gain.gain.value = vol;
+  src.connect(gain);
+  gain.connect(dest);
+
+  // One voice per instrument and lane: when a new hit starts, the previous one is faded out in
+  // 4 ms. Tails no longer pile up on fast repeats, so level and pitch stay constant.
+  const key = `${instrument}:${lane}`;
+  const prev = voices && voices.get(key);
+  if (prev && time > prev.start) {
+    const from = Math.max(prev.start, time - CHOKE_TIME);
+    prev.gain.gain.setValueAtTime(prev.vol, from);
+    prev.gain.gain.linearRampToValueAtTime(0, time);
+  }
+  if (voices) voices.set(key, { gain, start: time, vol });
+
+  src.start(time);
+};
+
+const playClick = (ctx, time, isDownbeat, dest) => {
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.connect(gain);
+  gain.connect(dest);
+  osc.frequency.value = isDownbeat ? 800 : 1200;
+  osc.type = 'sine';
+  const dur = 0.04;
+  gain.gain.setValueAtTime(0, time);
+  gain.gain.linearRampToValueAtTime(isDownbeat ? 0.25 : 0.15, time + 0.001);
+  gain.gain.exponentialRampToValueAtTime(0.001, time + dur);
+  osc.start(time);
+  osc.stop(time + dur);
+};
+
+/* Time of the audio that is actually being HEARD right now
+   (compensates the browser's reported output latency). */
+const getHeardTime = (ctx) => {
+  try {
+    if (typeof ctx.getOutputTimestamp === 'function') {
+      const ts = ctx.getOutputTimestamp();
+      if (ts && ts.contextTime > 0 && ts.performanceTime > 0) {
+        const t = ts.contextTime + (performance.now() - ts.performanceTime) / 1000;
+        if (t <= ctx.currentTime + 0.02 && t >= ctx.currentTime - 0.6) return t;
+      }
+    }
+  } catch (e) {
+    /* fall back below */
+  }
+  return ctx.currentTime - Math.min(ctx.outputLatency || 0, 0.5);
+};
+
+/* =====================================================================
+   MAIN COMPONENT
+   ===================================================================== */
+const ABELRhythmDominoes = () => {
+  const [showInfo, setShowInfo] = useState(true);
+  const [tempo, setTempo] = useState(120);
+  const [metronomeEnabled, setMetronomeEnabled] = useState(true);
+  const [ghostNotesEnabled, setGhostNotesEnabled] = useState(true);
+  const [syncOffset, setSyncOffset] = useState(0);
+  const [showSync, setShowSync] = useState(false);
+  const [hapticsEnabled, setHapticsEnabled] = useState(true); // on by default (a saved choice overrides it)
+
+  // ---------- Haptics (Web Vibration API, with graceful fallback) ----------
+  const hapticsSupported = typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function';
+  // The Vibration API only controls duration, so "intensity" = pulse length (ms):
+  // 1 = ghost note, 2 = played note, 3 = beat, 4 = downbeat (first beat of the bar)
+  const HAPTIC_MS = { 1: 6, 2: 14, 3: 24, 4: 42 };
+  const safeVibrate = (pattern) => {
+    try {
+      if (hapticsSupported) return navigator.vibrate(pattern);
+    } catch (e) {
+      /* never let haptics break audio playback */
+    }
+    return false;
+  };
+  const hapticsOnRef = useRef(false);
+  hapticsOnRef.current = hapticsEnabled && hapticsSupported;
+  const hapticLastRef = useRef({ segId: null, steps: [] });
+
+  // Called from the audio-clock animator: fires exactly when a beat / note is heard
+  const fireHaptics = (seg, p) => {
+    if (!hapticsOnRef.current) return;
+    try {
+      const h = hapticLastRef.current;
+      let level = 0;
+      if (h.segId !== seg.id) {
+        h.segId = seg.id;
+        h.steps = seg.tracks.map(() => -1);
+        if (seg.metro) level = seg.beatPos === 0 ? 4 : 3; // mirrors the audible metronome click
+      }
+      seg.tracks.forEach((track, ti) => {
+        const step = Math.min(track.n - 1, Math.floor(p * track.n));
+        if (h.steps[ti] !== step) {
+          h.steps[ti] = step;
+          if (track.sound[step]) level = Math.max(level, 2);
+          else if (seg.ghost) level = Math.max(level, 1);
+        }
+      });
+      if (level) safeVibrate(HAPTIC_MS[level]);
+    } catch (e) {
+      /* ignore */
+    }
+  };
+
+  const toggleHaptics = () => {
+    if (!hapticsSupported) return;
+    const next = !hapticsEnabled;
+    setHapticsEnabled(next);
+    safeVibrate(next ? 30 : 0); // short confirmation buzz when switched on
+    try {
+      if (window.storage) {
+        Promise.resolve(window.storage.set('abel:haptics', next ? '1' : '0')).catch(() => {});
+      }
+    } catch (e) {
+      /* preference could not be saved: ignore */
+    }
+  };
+
+  // Restore the saved preference (if the environment provides storage)
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        if (window.storage) {
+          const r = await window.storage.get('abel:haptics');
+          if (!cancelled && r) setHapticsEnabled(r.value === '1');
+        }
+      } catch (e) {
+        /* no saved preference */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const [beatsPerBar, setBeatsPerBar] = useState(4);
+  const [selectedInstrument, setSelectedInstrument] = useState('snare');
+  const [selectedPattern, setSelectedPattern] = useState(null);
+  const [playKind, setPlayKind] = useState(null); // null | 'solo' | 'sequence' | 'fused' | 'layers'
+  const [sequence, setSequence] = useState([]);
+  const [isSequenceMode, setIsSequenceMode] = useState(false);
+  const [isFusionMode, setIsFusionMode] = useState(false);
+  const [isLayerMode, setIsLayerMode] = useState(false);
+  const [fusionPatterns, setFusionPatterns] = useState([]);
+  const [fusedPattern, setFusedPattern] = useState(null);
+  const [layers, setLayers] = useState([
+    { pattern: null, instrument: 'snare' },
+    { pattern: null, instrument: 'kick' },
+    { pattern: null, instrument: 'hihat' },
+    { pattern: null, instrument: 'clap' }
+  ]);
+  const [activeLayer, setActiveLayer] = useState(0);
+
+  const isPlaying = playKind !== null;
+
+  // Engine refs
+  const ctxRef = useRef(null);
+  const masterRef = useRef(null);
+  const schedulerIdRef = useRef(null);
+  const rafRef = useRef(null);
+  const nextBeatRef = useRef(0);
+  const beatCountRef = useRef(0);
+  const seqPosRef = useRef(0);
+  const segIdRef = useRef(0);
+  const segmentsRef = useRef([]);
+  const playRef = useRef(null);
+  const samplesRef = useRef(null);
+  const voicesRef = useRef(new Map());
+
+  // Live values read by the audio scheduler / animator (no stale closures)
+  const settingsRef = useRef({});
+  const sequenceRef = useRef([]);
+  const fusedRef = useRef(null);
+  const layersRef = useRef([]);
+  settingsRef.current = {
+    tempo,
+    metronome: metronomeEnabled,
+    ghost: ghostNotesEnabled,
+    instrument: selectedInstrument,
+    sync: syncOffset,
+    beats: beatsPerBar
+  };
+  sequenceRef.current = sequence;
+  fusedRef.current = fusedPattern;
+  layersRef.current = layers;
+
+  // Animation refs
+  const registryRef = useRef(new Map());
+  const litRef = useRef(new Map());
+  const beatsContainerRef = useRef(null);
+  const beatElsRef = useRef([]);
+  const beatLitRef = useRef({ segId: null });
+
+  useEffect(() => {
+    ctxRef.current = new (window.AudioContext || window.webkitAudioContext)();
+    const createdCtx = ctxRef.current;
+    renderSamples(createdCtx)
+      .then((s) => {
+        if (ctxRef.current === createdCtx) samplesRef.current = s;
+      })
+      .catch(() => {});
+    beatElsRef.current = beatsContainerRef.current
+      ? Array.from(beatsContainerRef.current.querySelectorAll('[data-beat]'))
+      : [];
+    return () => {
+      if (schedulerIdRef.current) clearInterval(schedulerIdRef.current);
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      if (ctxRef.current) {
+        ctxRef.current.close().catch(() => {});
+      }
+    };
+  }, []);
+
+  // Re-collect the beat lights whenever their number changes
+  useEffect(() => {
+    beatElsRef.current = beatsContainerRef.current
+      ? Array.from(beatsContainerRef.current.querySelectorAll('[data-beat]'))
+      : [];
+    beatLitRef.current.segId = null;
+  }, [beatsPerBar]);
+
+  /* ---------------- Animator (driven by the audio clock) ---------------- */
+  const clearLit = () => {
+    for (const [, prev] of litRef.current) {
+      setStepState(prev.entry, prev.idx, 'idle');
+      setTileActive(prev.entry, false);
+      if (prev.entry.bar) prev.entry.bar.style.transform = 'scaleX(0)';
+    }
+    litRef.current.clear();
+    beatLitRef.current.segId = null;
+    beatElsRef.current.forEach((e) => {
+      e.removeAttribute('data-state');
+      e.removeAttribute('data-muted');
+    });
+  };
+
+  const applyBeat = (seg) => {
+    const els = beatElsRef.current;
+    const b = beatLitRef.current;
+    if (!seg) {
+      if (b.segId !== null) {
+        els.forEach((e) => e.removeAttribute('data-state'));
+        b.segId = null;
+      }
+      return;
+    }
+    if (b.segId === seg.id) return;
+    b.segId = seg.id;
+    els.forEach((e, i) => {
+      if (i === seg.beatPos) e.setAttribute('data-state', i === 0 ? 'down' : 'on');
+      else e.removeAttribute('data-state');
+      e.setAttribute('data-muted', seg.metro ? '0' : '1');
+    });
+    const el = els[seg.beatPos];
+    if (el && el.animate) {
+      try {
+        el.animate(
+          [{ transform: 'scale(2.2)' }, { transform: seg.beatPos === 0 ? 'scale(1.4)' : 'scale(1.25)' }],
+          { duration: 200, easing: 'ease-out' }
+        );
+      } catch (e) {
+        /* ignore */
+      }
+    }
+  };
+
+  const applyFrame = (frame) => {
+    const reg = registryRef.current;
+    const lit = litRef.current;
+    const active = new Set();
+
+    if (frame) {
+      const { seg, p } = frame;
+      for (const track of seg.tracks) {
+        const step = Math.min(track.n - 1, Math.floor(p * track.n));
+        const popMs = Math.max(60, Math.min((seg.dur / track.n) * 1000, 260));
+        for (const tg of track.targets) {
+          const entry = reg.get(tg.viewId);
+          if (!entry) continue;
+          const local = step - tg.offset;
+          if (local < 0 || local >= tg.count) continue;
+          active.add(tg.viewId);
+          const prev = lit.get(tg.viewId);
+          if (!prev || prev.entry !== entry || prev.idx !== local || prev.segId !== seg.id) {
+            if (prev && prev.entry === entry) setStepState(entry, prev.idx, 'idle');
+            const state = track.sound[step] ? 'hit' : seg.ghost ? 'ghost' : 'rest';
+            setStepState(entry, local, state, popMs);
+            setTileActive(entry, true);
+            lit.set(tg.viewId, { entry, idx: local, segId: seg.id });
+          }
+          if (entry.bar && tg.count === track.n) {
+            entry.bar.style.transform = `scaleX(${p.toFixed(4)})`;
+          }
+        }
+      }
+    }
+
+    for (const [id, prev] of lit) {
+      if (!active.has(id)) {
+        setStepState(prev.entry, prev.idx, 'idle');
+        setTileActive(prev.entry, false);
+        if (prev.entry.bar) prev.entry.bar.style.transform = 'scaleX(0)';
+        lit.delete(id);
+      }
+    }
+
+    applyBeat(frame ? frame.seg : null);
+  };
+
+  const animate = () => {
+    rafRef.current = requestAnimationFrame(animate);
+    const ctx = ctxRef.current;
+    if (!ctx || !playRef.current) return;
+
+    const now = getHeardTime(ctx) - settingsRef.current.sync / 1000;
+    const q = segmentsRef.current;
+    while (q.length > 1 && q[1].start <= now) q.shift();
+    const seg = q[0];
+
+    if (!seg || now < seg.start || now >= seg.start + seg.dur) {
+      applyFrame(null);
+      return;
+    }
+    const p = (now - seg.start) / seg.dur;
+    fireHaptics(seg, p);
+    applyFrame({ seg, p });
+  };
+
+  /* ---------------- Scheduler (audio + visual timeline together) ---------------- */
+  const scheduleBeat = (ctx, t) => {
+    const s = settingsRef.current;
+    const play = playRef.current;
+    const dest = masterRef.current;
+    if (!play || !dest) return false;
+
+    const beat = 60 / s.tempo;
+
+    // 1) Decide which tracks play on this beat
+    const defs = [];
+    if (play.mode === 'solo') {
+      if (play.pattern) {
+        defs.push({
+          pattern: play.pattern,
+          instrument: s.instrument,
+          viewIds: [`grid:${play.pattern.letter}`, 'info']
+        });
+      }
+    } else if (play.mode === 'fused') {
+      const fp = fusedRef.current;
+      if (fp) {
+        defs.push({ pattern: fp, instrument: s.instrument, viewIds: ['fused-result', 'info'], withParts: true });
+      }
+    } else if (play.mode === 'sequence') {
+      const seq = sequenceRef.current;
+      if (seq.length) {
+        const idx = seqPosRef.current % seq.length;
+        seqPosRef.current = idx + 1;
+        const pat = seq[idx];
+        const viewIds = [`seq:${idx}`];
+        if (!pat.parts) viewIds.push(`grid:${pat.letter}`);
+        defs.push({ pattern: pat, instrument: s.instrument, viewIds });
+      }
+    } else {
+      layersRef.current.forEach((layer, i) => {
+        if (layer.pattern) {
+          defs.push({
+            pattern: layer.pattern,
+            instrument: layer.instrument,
+            viewIds: [`layer:${i}`, `grid:${layer.pattern.letter}`]
+          });
+        }
+      });
+    }
+    if (defs.length === 0) return false;
+
+    // 2) Metronome click
+    const beatPos = beatCountRef.current % Math.max(1, s.beats);
+    beatCountRef.current += 1;
+    if (s.metronome) playClick(ctx, t, beatPos === 0, dest);
+
+    // 3) Audio for every track + matching visual timeline
+    const tracks = defs.map((def) => {
+      const symbols = def.pattern.code.split(' ');
+      const n = symbols.length;
+      const sound = symbols.map((sy) => sy === '•');
+      const targets = def.viewIds.map((viewId) => ({ viewId, offset: 0, count: n }));
+      if (def.withParts && def.pattern.parts) {
+        let off = 0;
+        def.pattern.parts.forEach((part, k) => {
+          const c = part.code.split(' ').length;
+          targets.push({ viewId: `fpart:${k}`, offset: off, count: c });
+          off += c;
+        });
+      }
+      const stepDur = beat / n;
+      const lane = def.viewIds[0].startsWith('layer:') ? def.viewIds[0] : 'main';
+      const samples = samplesRef.current;
+      const voices = voicesRef.current;
+      for (let i = 0; i < n; i++) {
+        const tt = t + i * stepDur;
+        if (sound[i]) playInstrument(ctx, tt, def.instrument, false, dest, samples, voices, lane);
+        else if (s.ghost) playInstrument(ctx, tt, def.instrument, true, dest, samples, voices, lane);
+      }
+      return { n, sound, targets };
+    });
+
+    segmentsRef.current.push({
+      id: ++segIdRef.current,
+      start: t,
+      dur: beat,
+      ghost: s.ghost,
+      metro: s.metronome,
+      beatPos,
+      tracks
+    });
+
+    nextBeatRef.current = t + beat;
+    return true;
+  };
+
+  const scheduler = () => {
+    const ctx = ctxRef.current;
+    if (!ctx || !playRef.current) return;
+    const ahead = 0.2;
+    if (nextBeatRef.current < ctx.currentTime - 0.05) {
+      nextBeatRef.current = ctx.currentTime + 0.05; // resync if the page was throttled
+    }
+    while (nextBeatRef.current < ctx.currentTime + ahead) {
+      if (!scheduleBeat(ctx, nextBeatRef.current)) {
+        stopPlayback();
+        return;
+      }
+    }
+    const q = segmentsRef.current;
+    while (q.length > 8) q.shift();
+  };
+
+  const stopEngine = () => {
+    if (schedulerIdRef.current) {
+      clearInterval(schedulerIdRef.current);
+      schedulerIdRef.current = null;
+    }
+    if (rafRef.current) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
+    playRef.current = null;
+    segmentsRef.current = [];
+
+    const ctx = ctxRef.current;
+    const m = masterRef.current;
+    if (m && ctx) {
+      try {
+        const now = ctx.currentTime;
+        m.gain.cancelScheduledValues(now);
+        m.gain.setValueAtTime(m.gain.value, now);
+        m.gain.linearRampToValueAtTime(0, now + 0.01);
+      } catch (e) {
+        /* ignore */
+      }
+      setTimeout(() => {
+        try {
+          m.disconnect();
+        } catch (e) {
+          /* ignore */
+        }
+      }, 150);
+    }
+    masterRef.current = null;
+    hapticLastRef.current = { segId: null, steps: [] };
+    safeVibrate(0); // cancel any vibration in progress
+    clearLit();
+  };
+
+  const startPlayback = (mode, pattern) => {
+    const ctx = ctxRef.current;
+    if (!ctx) return;
+    if (ctx.state === 'suspended') ctx.resume();
+
+    stopEngine();
+
+    const master = ctx.createGain();
+    master.gain.value = mode === 'layers' ? 0.7 : 1; // headroom when several instruments play together
+    master.connect(ctx.destination);
+    masterRef.current = master;
+
+    playRef.current = { mode, pattern };
+    segmentsRef.current = [];
+    beatCountRef.current = 0;
+    seqPosRef.current = 0;
+    nextBeatRef.current = ctx.currentTime + 0.08;
+
+    scheduler();
+    schedulerIdRef.current = setInterval(scheduler, 25);
+    rafRef.current = requestAnimationFrame(animate);
+  };
+
+  const stopPlayback = () => {
+    stopEngine();
+    setPlayKind(null);
+    setSelectedPattern(null);
+  };
+
+  /* ---------------- UI actions ---------------- */
+  const assignToLayer = (pattern) => {
+    const next = layers.map((l, i) => (i === activeLayer ? { ...l, pattern } : l));
+    setLayers(next);
+    // move the selection to the next empty slot (if any)
+    for (let k = 1; k <= MAX_LAYERS; k++) {
+      const j = (activeLayer + k) % MAX_LAYERS;
+      if (!next[j].pattern) {
+        setActiveLayer(j);
+        break;
+      }
+    }
+  };
+
+  // ---------- Tempo: slider, typed value, and +/- buttons ----------
+  const [tempoDraft, setTempoDraft] = useState(null); // text being typed (null = show the real tempo)
+  const tempoHoldRef = useRef({ t: null, i: null });
+  const tempoSkipRef = useRef(false);
+
+  // ---------- Display mode: dots and dashes, music notation, or pie circles ----------
+  const [displayMode, setDisplayMode] = useState('dots'); // 'dots' | 'notation' | 'pie'
+  const [lightTheme, setLightTheme] = useState(false); // the dark theme is the default
+  THEME.light = lightTheme;
+
+  // restore the saved theme (if the environment can store it); dark stays the default
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        if (window.storage) {
+          const r = await window.storage.get('abel:theme');
+          if (!cancelled && r && r.value === 'light') setLightTheme(true);
+        }
+      } catch (e) {
+        /* no saved theme: keep the default */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const toggleTheme = () => {
+    const next = !lightTheme;
+    setLightTheme(next);
+    try {
+      if (window.storage) {
+        Promise.resolve(window.storage.set('abel:theme', next ? 'light' : 'dark')).catch(() => {});
+      }
+    } catch (e) {
+      /* theme could not be saved: ignore */
+    }
+  };
+  const [notationGhost, setNotationGhost] = useState(false); // dashes drawn as ghost notes instead of rests
+  const notationMode = displayMode === 'notation';
+  const pieMode = displayMode === 'pie';
+  const setNotationMode = (on) => setDisplayMode(on ? 'notation' : 'dots');
+  const setPieMode = (on) => setDisplayMode(on ? 'pie' : 'dots');
+  NOTATION.on = notationMode;
+  NOTATION.pie = pieMode;
+  NOTATION.ghost = notationGhost;
+
+  const clampTempo = (v) => Math.min(300, Math.max(1, Math.round(v)));
+
+  const changeTempo = (v) => {
+    const next = clampTempo(v);
+    setTempo(next);
+    settingsRef.current.tempo = next; // the very next scheduled beat already uses it
+    const ctx = ctxRef.current;
+    const p = playRef.current;
+    if (p && ctx && nextBeatRef.current - ctx.currentTime > 1) {
+      // a long beat (slow tempo) is already queued: restart so the new tempo is heard right away
+      startPlayback(p.mode, p.pattern);
+    }
+  };
+
+  const commitTempoDraft = () => {
+    if (tempoSkipRef.current) {
+      tempoSkipRef.current = false;
+      setTempoDraft(null);
+      return;
+    }
+    if (tempoDraft === null) return;
+    const n = parseInt(tempoDraft, 10);
+    if (!Number.isNaN(n)) changeTempo(n);
+    setTempoDraft(null);
+  };
+
+  const stopTempoHold = () => {
+    clearTimeout(tempoHoldRef.current.t);
+    clearInterval(tempoHoldRef.current.i);
+    tempoHoldRef.current = { t: null, i: null };
+  };
+  const startTempoHold = (delta) => {
+    stopTempoHold();
+    const step = () => changeTempo(settingsRef.current.tempo + delta);
+    step();
+    // hold the button to keep changing the tempo
+    tempoHoldRef.current.t = setTimeout(() => {
+      tempoHoldRef.current.i = setInterval(step, 70);
+    }, 400);
+  };
+  useEffect(() => () => stopTempoHold(), []);
+
+  // ---------- Quick merge: long-press a pattern, then tap a second one ----------
+  const [mergeFirst, setMergeFirst] = useState(null);
+
+  useEffect(() => {
+    if (isFusionMode) setMergeFirst(null); // not needed in Fusion mode
+  }, [isFusionMode]);
+
+  const startMerge = (pattern) => {
+    setMergeFirst(pattern);
+    if (hapticsOnRef.current) safeVibrate(20);
+  };
+
+  // Where the merged pattern goes depends on the current mode
+  const placeMerged = (merged) => {
+    if (hapticsOnRef.current) safeVibrate([12, 40, 12]);
+    if (isLayerMode) {
+      assignToLayer(merged); // selected layer slot
+    } else if (isSequenceMode) {
+      setSequence((prev) => [...prev, merged]); // end of the sequence
+    } else {
+      setSelectedPattern(merged); // plays in a loop like a single pattern
+      setPlayKind('solo');
+      startPlayback('solo', merged);
+    }
+  };
+
+  const handlePatternClick = (pattern) => {
+    // second tap of a quick merge
+    if (mergeFirst && !isFusionMode) {
+      const merged = buildFused([mergeFirst, pattern]);
+      setMergeFirst(null);
+      placeMerged(merged);
+      return;
+    }
+    if (isLayerMode) {
+      assignToLayer(pattern);
+      return;
+    }
+    if (isFusionMode) {
+      addToFusion(pattern);
+      return;
+    }
+    if (isSequenceMode) {
+      setSequence((prev) => [...prev, pattern]);
+      return;
+    }
+    if (playKind === 'solo' && selectedPattern?.letter === pattern.letter) {
+      stopPlayback();
+      return;
+    }
+    setSelectedPattern(pattern);
+    setPlayKind('solo');
+    startPlayback('solo', pattern);
+  };
+
+  const toggleSequenceMode = () => {
+    if (isPlaying) stopPlayback();
+    if (isSequenceMode) setSequence([]);
+    else setIsLayerMode(false);
+    setIsSequenceMode(!isSequenceMode);
+  };
+
+  const playSequence = () => {
+    if (sequence.length === 0) return;
+    if (playKind === 'sequence') {
+      stopPlayback();
+      return;
+    }
+    setSelectedPattern(null);
+    setPlayKind('sequence');
+    startPlayback('sequence', null);
+  };
+
+  const clearSequence = () => {
+    if (isPlaying) stopPlayback();
+    setSequence([]);
+  };
+
+  const removeFromSequence = (index) => {
+    const next = sequence.filter((_, i) => i !== index);
+    setSequence(next);
+    if (next.length === 0 && playKind === 'sequence') stopPlayback();
+  };
+
+  // ---------- Drag & drop reordering of the sequence (mouse + touch) ----------
+  const [dragState, setDragState] = useState(null); // { from, over, after, x, y }
+  const dragRef = useRef(null);
+  const seqTileRefs = useRef([]);
+  const dragChipRef = useRef(null);
+
+  const startDrag = (e, index) => {
+    if (e.button !== undefined && e.button !== 0) return;
+    e.preventDefault();
+    dragRef.current = { from: index, over: index, after: false };
+    setDragState({ from: index, over: index, after: false, x: e.clientX, y: e.clientY });
+    document.body.style.userSelect = 'none';
+
+    const onMove = (ev) => {
+      const chip = dragChipRef.current;
+      if (chip) chip.style.transform = `translate(${ev.clientX + 12}px, ${ev.clientY - 28}px)`;
+
+      // auto-scroll when the finger / mouse nears the top or bottom edge
+      if (ev.clientY < 70) window.scrollBy(0, -14);
+      else if (ev.clientY > window.innerHeight - 70) window.scrollBy(0, 14);
+
+      // find the frame under (or nearest to) the pointer
+      const tiles = seqTileRefs.current.slice(0, sequenceRef.current.length);
+      let best = -1;
+      let bestD = Infinity;
+      tiles.forEach((el, i) => {
+        if (!el) return;
+        const r = el.getBoundingClientRect();
+        const inside =
+          ev.clientX >= r.left && ev.clientX <= r.right && ev.clientY >= r.top && ev.clientY <= r.bottom;
+        const dx = ev.clientX - (r.left + r.width / 2);
+        const dy = ev.clientY - (r.top + r.height / 2);
+        const dist = inside ? -1 : dx * dx + dy * dy;
+        if (dist < bestD) {
+          bestD = dist;
+          best = i;
+        }
+      });
+      if (best < 0 || !tiles[best]) return;
+      const rb = tiles[best].getBoundingClientRect();
+      const after = ev.clientX > rb.left + rb.width / 2;
+      const d = dragRef.current;
+      if (d && (d.over !== best || d.after !== after)) {
+        d.over = best;
+        d.after = after;
+        setDragState((prev) => (prev ? { ...prev, over: best, after } : prev));
+      }
+    };
+
+    const finish = (apply) => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onCancel);
+      document.body.style.userSelect = '';
+      const d = dragRef.current;
+      dragRef.current = null;
+      setDragState(null);
+      if (apply && d) {
+        let to = d.after ? d.over + 1 : d.over;
+        if (to !== d.from && to !== d.from + 1) {
+          const seq = sequenceRef.current.slice();
+          const [item] = seq.splice(d.from, 1);
+          if (item) {
+            if (to > d.from) to -= 1;
+            seq.splice(to, 0, item);
+            setSequence(seq);
+          }
+        }
+      }
+    };
+    const onUp = () => finish(true);
+    const onCancel = () => finish(false);
+
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onCancel);
+  };
+
+  // ---------- "Placed in the sequencer" feedback (animation + subtle vibration) ----------
+  const prevSeqLenRef = useRef(0);
+  const seqCountRef = useRef(null);
+  const pillElRef = useRef(null);
+  const pillTimerRef = useRef(null);
+
+  // Small floating counter, shown when the sequencer is scrolled out of view
+  const showCounterPill = (n) => {
+    let el = pillElRef.current;
+    const isNew = !el;
+    if (isNew) {
+      el = document.createElement('div');
+      Object.assign(el.style, {
+        position: 'fixed',
+        top: '12px',
+        left: '50%',
+        transform: 'translateX(-50%)',
+        zIndex: '90',
+        pointerEvents: 'none',
+        padding: '6px 16px',
+        borderRadius: '9999px',
+        background: 'rgba(126,34,206,.95)',
+        border: '1px solid #d8b4fe',
+        color: '#fff',
+        fontSize: '14px',
+        fontWeight: '700',
+        boxShadow: '0 6px 18px rgba(0,0,0,.45)'
+      });
+      document.body.appendChild(el);
+      pillElRef.current = el;
+    }
+    el.textContent = `Sequence: ${n}`;
+    if (el.animate) {
+      el.animate(
+        isNew
+          ? [
+              { opacity: 0, transform: 'translateX(-50%) translateY(-8px)' },
+              { opacity: 1, transform: 'translateX(-50%) translateY(0)' }
+            ]
+          : [
+              { transform: 'translateX(-50%) scale(1)' },
+              { transform: 'translateX(-50%) scale(1.15)' },
+              { transform: 'translateX(-50%) scale(1)' }
+            ],
+        { duration: isNew ? 160 : 250, easing: 'ease-out' }
+      );
+    }
+    clearTimeout(pillTimerRef.current);
+    pillTimerRef.current = setTimeout(() => {
+      const cur = pillElRef.current;
+      pillElRef.current = null;
+      if (!cur) return;
+      if (cur.animate) {
+        const a = cur.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 250, fill: 'forwards' });
+        a.onfinish = () => cur.remove();
+      } else {
+        cur.remove();
+      }
+    }, 1400);
+  };
+
+  // A chip flies from the tapped pattern to its slot in the sequencer
+  const flyChip = (fromEl, letter, tx, ty) => {
+    const r = fromEl.getBoundingClientRect();
+    const fx = r.left + r.width / 2;
+    const fy = r.top + r.height / 2;
+    const chip = document.createElement('div');
+    chip.textContent = letter;
+    Object.assign(chip.style, {
+      position: 'fixed',
+      left: '0',
+      top: '0',
+      zIndex: '100',
+      pointerEvents: 'none',
+      padding: '4px 10px',
+      borderRadius: '8px',
+      background: '#9333ea',
+      border: '2px solid #fff',
+      color: '#fff',
+      fontSize: '14px',
+      fontWeight: '700',
+      boxShadow: '0 4px 14px rgba(0,0,0,.4)',
+      willChange: 'transform, opacity'
+    });
+    document.body.appendChild(chip);
+    if (!chip.animate) {
+      chip.remove();
+      return;
+    }
+    const a = chip.animate(
+      [
+        { transform: `translate(${fx}px, ${fy}px) translate(-50%, -50%) scale(1)`, opacity: 1 },
+        { transform: `translate(${tx}px, ${ty}px) translate(-50%, -50%) scale(0.7)`, opacity: 0.9 }
+      ],
+      { duration: 420, easing: 'cubic-bezier(.2,.8,.2,1)', fill: 'forwards' }
+    );
+    a.onfinish = () => chip.remove();
+  };
+
+  useEffect(() => {
+    const prev = prevSeqLenRef.current;
+    const len = sequence.length;
+    prevSeqLenRef.current = len;
+    if (len <= prev) return undefined; // only react when a pattern is ADDED (not on reorder / remove)
+
+    const newIndex = len - 1;
+    const added = sequence[newIndex];
+
+    // subtle vibration (only if haptics are on and supported)
+    if (hapticsOnRef.current) safeVibrate(10);
+
+    const raf = requestAnimationFrame(() => {
+      try {
+        const tile = seqTileRefs.current[newIndex];
+        let tx;
+        let ty;
+        let onScreen = false;
+        if (tile) {
+          const r = tile.getBoundingClientRect();
+          if (r.bottom > 0 && r.top < window.innerHeight) {
+            tx = r.left + r.width / 2;
+            ty = r.top + r.height / 2;
+            onScreen = true;
+          }
+        }
+        if (!onScreen) {
+          showCounterPill(len);
+          tx = window.innerWidth / 2;
+          ty = 28;
+        }
+
+        const entry = registryRef.current.get(`grid:${added.letter}`);
+        const fromEl = entry && entry.tile;
+        const flies = !!fromEl && tx !== undefined;
+        if (flies) flyChip(fromEl, added.letter, tx, ty);
+        const delay = flies ? 380 : 0; // let the chip arrive before the frame pops in
+
+        if (tile && tile.animate) {
+          tile.animate(
+            [
+              { transform: 'scale(0.4)', opacity: 0, boxShadow: '0 0 0 0 rgba(192,132,252,.9)' },
+              { transform: 'scale(1.12)', opacity: 1, boxShadow: '0 0 0 10px rgba(192,132,252,0)', offset: 0.55 },
+              { transform: 'scale(1)', opacity: 1, boxShadow: '0 0 0 0 rgba(192,132,252,0)' }
+            ],
+            { duration: 450, delay, easing: 'ease-out', fill: 'backwards' }
+          );
+        }
+        const badge = seqCountRef.current;
+        if (badge && badge.animate) {
+          badge.animate(
+            [{ transform: 'scale(1)' }, { transform: 'scale(1.5)' }, { transform: 'scale(1)' }],
+            { duration: 350, delay, easing: 'ease-out' }
+          );
+        }
+      } catch (e) {
+        /* animation is cosmetic: never break the app */
+      }
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [sequence]);
+
+  useEffect(
+    () => () => {
+      clearTimeout(pillTimerRef.current);
+      if (pillElRef.current) pillElRef.current.remove();
+    },
+    []
+  );
+
+  // Long-press (touch / pen) or press-and-move (mouse) on a frame starts the drag
+  useEffect(() => {
+    // keeps the page from scrolling while a frame is being dragged (must be non-passive)
+    const block = (e) => {
+      if (dragRef.current && e.cancelable) e.preventDefault();
+    };
+    window.addEventListener('touchmove', block, { passive: false });
+    return () => window.removeEventListener('touchmove', block);
+  }, []);
+
+  const onTilePointerDown = (e, index) => {
+    if (e.target.closest && e.target.closest('button')) return; // leave the × button alone
+    const isMouse = e.pointerType === 'mouse';
+    if (isMouse && e.button !== 0) return;
+    const startX = e.clientX;
+    const startY = e.clientY;
+    let lastX = startX;
+    let lastY = startY;
+    let timer = null;
+
+    const stopWaiting = () => {
+      clearTimeout(timer);
+      window.removeEventListener('pointermove', onWaitMove);
+      window.removeEventListener('pointerup', stopWaiting);
+      window.removeEventListener('pointercancel', stopWaiting);
+    };
+    const begin = () => {
+      stopWaiting();
+      if (hapticsOnRef.current) safeVibrate(15); // little "pick-up" buzz
+      startDrag({ button: 0, clientX: lastX, clientY: lastY, preventDefault() {} }, index);
+    };
+    function onWaitMove(ev) {
+      lastX = ev.clientX;
+      lastY = ev.clientY;
+      const moved = Math.hypot(lastX - startX, lastY - startY);
+      if (isMouse) {
+        if (moved > 4) begin();
+      } else if (moved > 10) {
+        stopWaiting(); // the finger is scrolling the page, not long-pressing
+      }
+    }
+
+    window.addEventListener('pointermove', onWaitMove);
+    window.addEventListener('pointerup', stopWaiting);
+    window.addEventListener('pointercancel', stopWaiting);
+    if (!isMouse) timer = setTimeout(begin, 350);
+  };
+
+  // Where to draw the drop marker for a given frame ('before' | 'after' | null)
+  const dropSide = (index) => {
+    if (!dragState || dragState.over !== index) return null;
+    const to = dragState.after ? index + 1 : index;
+    if (to === dragState.from || to === dragState.from + 1) return null; // would not move
+    return dragState.after ? 'after' : 'before';
+  };
+
+  const toggleFusionMode = () => {
+    if (isPlaying) stopPlayback();
+    if (isFusionMode) {
+      setFusionPatterns([]);
+      setFusedPattern(null);
+    } else {
+      setIsLayerMode(false);
+    }
+    setIsFusionMode(!isFusionMode);
+  };
+
+  const addToFusion = (pattern) => {
+    const next = [...fusionPatterns, pattern];
+    setFusionPatterns(next);
+    setFusedPattern(buildFused(next));
+  };
+
+  const clearFusion = () => {
+    if (playKind === 'fused') stopPlayback();
+    setFusionPatterns([]);
+    setFusedPattern(null);
+  };
+
+  const playFusedPattern = () => {
+    if (!fusedPattern) return;
+    if (playKind === 'fused') {
+      stopPlayback();
+      return;
+    }
+    setSelectedPattern(null);
+    setPlayKind('fused');
+    startPlayback('fused', null);
+  };
+
+  const addFusedToSequence = () => {
+    if (!fusedPattern) return;
+    setSequence([...sequence, fusedPattern]);
+  };
+
+  const removeFromFusion = (index) => {
+    const next = fusionPatterns.filter((_, i) => i !== index);
+    setFusionPatterns(next);
+    if (next.length === 0) {
+      setFusedPattern(null);
+      if (playKind === 'fused') stopPlayback();
+    } else {
+      setFusedPattern(buildFused(next));
+    }
+  };
+
+  const toggleLayerMode = () => {
+    if (isPlaying) stopPlayback();
+    if (!isLayerMode) {
+      // Layer Mode replaces the other builders (their content is kept)
+      setIsSequenceMode(false);
+      setIsFusionMode(false);
+    }
+    setIsLayerMode(!isLayerMode);
+  };
+
+  const hasLayers = layers.some((l) => l.pattern);
+
+  const playLayers = () => {
+    if (!hasLayers) return;
+    if (playKind === 'layers') {
+      stopPlayback();
+      return;
+    }
+    setSelectedPattern(null);
+    setPlayKind('layers');
+    startPlayback('layers', null);
+  };
+
+  const clearLayer = (index) => {
+    setLayers((prev) => prev.map((l, i) => (i === index ? { ...l, pattern: null } : l)));
+    setActiveLayer(index);
+  };
+
+  const clearAllLayers = () => {
+    if (playKind === 'layers') stopPlayback();
+    setLayers((prev) => prev.map((l) => ({ ...l, pattern: null })));
+    setActiveLayer(0);
+  };
+
+  const setLayerInstrument = (index, instrument) => {
+    setLayers((prev) => prev.map((l, i) => (i === index ? { ...l, instrument } : l)));
+  };
+
+  // All sequencer frames share the size of the longest pattern in the sequence
+  const seqMaxSteps = sequence.reduce((m, p) => Math.max(m, p.code.split(' ').length), 1);
+  const seqTileWidth = Math.max(84, seqMaxSteps * 16 + 28);
+
+  const infoPattern = playKind === 'solo' ? selectedPattern : playKind === 'fused' ? fusedPattern : null;
+
+  /* ---------------- Render ---------------- */
+  return (
+    <div className={`min-h-screen p-6 ${lightTheme ? 'abel-light bg-gray-100 text-gray-900' : 'bg-gray-900 text-white'}`}>
+      <style>{CSS + LIGHT_CSS}</style>
+      {(mergeFirst || (playKind === 'solo' && selectedPattern && selectedPattern.parts)) && (
+        <div
+          style={{
+            position: 'fixed',
+            left: 12,
+            right: 12,
+            bottom: 12,
+            zIndex: 80,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 8,
+            pointerEvents: 'none'
+          }}
+        >
+          {playKind === 'solo' && selectedPattern && selectedPattern.parts && (
+            <div
+              className="rounded-lg border-2 border-blue-400 bg-blue-950 p-3 shadow-lg"
+              style={{ pointerEvents: 'auto' }}
+            >
+              <div className="flex items-center gap-2">
+                <div className="flex-shrink-0">
+                  <div className="text-xs text-blue-300">Merged</div>
+                  <div className="text-sm font-bold">
+                    {selectedPattern.parts.map((p) => p.letter).join(' + ')}
+                  </div>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <PatternView
+                    viewId={`grid:${selectedPattern.letter}`}
+                    pattern={selectedPattern}
+                    registry={registryRef}
+                    size="md"
+                  />
+                </div>
+                <button
+                  onClick={stopPlayback}
+                  className="flex-shrink-0 flex items-center gap-1 px-3 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm"
+                >
+                  <Pause size={16} />
+                  Stop
+                </button>
+              </div>
+            </div>
+          )}
+          {mergeFirst && (
+            <div
+              className="rounded-lg border-2 border-amber-400 bg-gray-900 p-3 shadow-lg flex items-center justify-between gap-3"
+              style={{ pointerEvents: 'auto' }}
+            >
+              <span className="text-sm">
+                Merge <strong className="text-amber-300">{mergeFirst.letter}</strong> with: tap another pattern
+              </span>
+              <button
+                onClick={() => setMergeFirst(null)}
+                className="px-3 py-1.5 rounded-lg bg-gray-700 hover:bg-gray-600 text-sm"
+              >
+                Cancel
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+      {dragState && sequence[dragState.from] && (
+        <div
+          ref={dragChipRef}
+          className="px-3 py-1.5 rounded-lg bg-purple-600 border-2 border-white text-sm font-bold shadow-lg"
+          style={{
+            position: 'fixed',
+            left: 0,
+            top: 0,
+            zIndex: 100,
+            pointerEvents: 'none',
+            transform: `translate(${dragState.x + 12}px, ${dragState.y - 28}px)`
+          }}
+        >
+          {sequence[dragState.from].letter}
+        </div>
+      )}
+      <div className="max-w-7xl mx-auto">
+        {/* Header */}
+        <div className="mb-8">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h1 className="text-4xl font-bold mb-2">
+                <span className="text-green-400">A</span>
+                <span className="text-yellow-400">B</span>
+                <span className="text-white">E</span>
+                <span className="text-white">L</span>{' '}
+                <span className="text-white">Rhyth</span>
+                <span className="text-green-400">m</span>{' '}
+                <span className="text-green-400">A</span>
+                <span className="text-white">lph</span>
+                <span className="text-green-400">a</span>
+                <span className="text-yellow-400">b</span>
+                <span className="text-white">et</span>
+              </h1>
+              <p className="text-gray-400">
+                © 2026 Hughes José Gallez. All rights reserved. •{' '}
+                <a
+                  href="https://www.abeldominoes.com"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-blue-400 hover:text-blue-300 underline transition-colors"
+                >
+                  abeldominoes.com
+                </a>
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={toggleTheme}
+                className="p-2 rounded-lg bg-gray-800 hover:bg-gray-700 transition-colors text-xl leading-none"
+                aria-label={lightTheme ? 'Switch to dark theme' : 'Switch to light theme'}
+                title={lightTheme ? 'Switch to dark theme' : 'Switch to light theme'}
+              >
+                {lightTheme ? '🌙' : '☀️'}
+              </button>
+              <button
+                onClick={() => setShowInfo(!showInfo)}
+                className="p-2 rounded-lg bg-gray-800 hover:bg-gray-700 transition-colors"
+              >
+                <Info size={24} />
+              </button>
+            </div>
+          </div>
+
+          {showInfo && (
+            <div className="bg-gray-800 rounded-lg p-4 mb-4">
+              <h3 className="font-bold mb-2">How it works:</h3>
+              <ul className="text-sm text-gray-300 space-y-1">
+                <li>• <strong>Dot (•)</strong> = sound/attack</li>
+                <li>• <strong>Dash (–)</strong> = rest/silence (or ghost note if enabled)</li>
+                <li>• <strong>A</strong> (Pulse) → <strong>B</strong> (2 Halves) → <strong>E</strong> (3 Thirds) → <strong>L</strong> (4 Quarters)</li>
+                <li>• <strong>Single Pattern Mode:</strong> Click a pattern to start loop, click again to stop</li>
+                <li>• <strong>Sequence Mode:</strong> Click patterns to add them to your sequence, press and hold a frame to drag it to a new position, then play the sequence in loop</li>
+                <li>• <strong>Fusion Mode:</strong> Combine patterns to create complex subdivisions (e.g., E+E = sextolet, B+E = quintolet)</li>
+                <li>• <strong>Layer Mode:</strong> Play up to 4 patterns at the same time, each with its own instrument (including patterns built in Fusion Mode)</li>
+                <li>• <strong>Quick Merge:</strong> Press and hold a pattern, then tap a second one to merge them. In Single Pattern Mode the merged pattern plays in a loop, in Sequence Mode it is added to the sequence, and in Layer Mode it goes into the selected slot</li>
+              </ul>
+            </div>
+          )}
+
+          {/* Tempo / Sound Controls */}
+          <div className="bg-gray-800 rounded-lg p-4 space-y-3">
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <Volume2 size={20} />
+                <button
+                  onPointerDown={() => startTempoHold(-1)}
+                  onPointerUp={stopTempoHold}
+                  onPointerLeave={stopTempoHold}
+                  onPointerCancel={stopTempoHold}
+                  onContextMenu={(e) => e.preventDefault()}
+                  className="w-9 h-9 rounded bg-gray-700 hover:bg-gray-600 font-bold text-lg select-none"
+                  style={{ touchAction: 'manipulation' }}
+                  aria-label="Decrease tempo"
+                >
+                  −
+                </button>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  maxLength={3}
+                  aria-label="Tempo in BPM"
+                  value={tempoDraft !== null ? tempoDraft : String(tempo)}
+                  onFocus={(e) => {
+                    const el = e.target;
+                    setTempoDraft(String(tempo));
+                    setTimeout(() => el.select(), 0);
+                  }}
+                  onChange={(e) => setTempoDraft(e.target.value.replace(/[^0-9]/g, '').slice(0, 3))}
+                  onBlur={commitTempoDraft}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.currentTarget.blur();
+                    } else if (e.key === 'Escape') {
+                      tempoSkipRef.current = true;
+                      e.currentTarget.blur();
+                    }
+                  }}
+                  className="w-16 h-9 text-center font-mono text-lg bg-gray-700 border border-gray-600 rounded"
+                />
+                <button
+                  onPointerDown={() => startTempoHold(1)}
+                  onPointerUp={stopTempoHold}
+                  onPointerLeave={stopTempoHold}
+                  onPointerCancel={stopTempoHold}
+                  onContextMenu={(e) => e.preventDefault()}
+                  className="w-9 h-9 rounded bg-gray-700 hover:bg-gray-600 font-bold text-lg select-none"
+                  style={{ touchAction: 'manipulation' }}
+                  aria-label="Increase tempo"
+                >
+                  +
+                </button>
+                {tempoDraft !== null ? (
+                  <button
+                    onPointerDown={(e) => {
+                      e.preventDefault();
+                      commitTempoDraft();
+                      if (document.activeElement) document.activeElement.blur();
+                    }}
+                    className="px-3 h-9 rounded bg-green-600 hover:bg-green-700 text-sm font-bold"
+                  >
+                    Set
+                  </button>
+                ) : (
+                  <span className="text-sm text-gray-400">BPM</span>
+                )}
+              </div>
+              <input
+                type="range"
+                min="1"
+                max="300"
+                value={tempo}
+                onChange={(e) => changeTempo(Number(e.target.value))}
+                className="w-full"
+              />
+            </div>
+
+            {/* Beats per bar + beat indicator (synced with the metronome clock) */}
+            <div className="flex items-center gap-3 flex-wrap">
+              <span className="text-sm text-gray-400">Beats per bar</span>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setBeatsPerBar((b) => Math.max(1, b - 1))}
+                  className="w-7 h-7 rounded bg-gray-700 hover:bg-gray-600 font-bold"
+                  aria-label="Fewer beats"
+                >
+                  −
+                </button>
+                <span className="w-6 text-center font-mono">{beatsPerBar}</span>
+                <button
+                  onClick={() => setBeatsPerBar((b) => Math.min(16, b + 1))}
+                  className="w-7 h-7 rounded bg-gray-700 hover:bg-gray-600 font-bold"
+                  aria-label="More beats"
+                >
+                  +
+                </button>
+              </div>
+              <div ref={beatsContainerRef} className="flex flex-wrap gap-2 items-center">
+                {Array.from({ length: beatsPerBar }).map((_, i) => (
+                  <div key={i} data-beat className="abel-beat" />
+                ))}
+              </div>
+            </div>
+
+            {/* A/V sync fine-tuning (hidden by default) */}
+            <button
+              onClick={() => setShowSync((v) => !v)}
+              className="text-xs text-gray-400 hover:text-gray-200 underline"
+            >
+              {showSync ? 'Hide' : 'Show'} animation delay
+            </button>
+            {showSync && (
+              <>
+                <div className="flex items-center gap-4">
+                  <label className="text-sm whitespace-nowrap">Animation delay: {syncOffset} ms</label>
+                  <input
+                    type="range"
+                    min="0"
+                    max="400"
+                    step="5"
+                    value={syncOffset}
+                    onChange={(e) => setSyncOffset(Number(e.target.value))}
+                    className="flex-1"
+                  />
+                </div>
+                <div className="text-xs text-gray-500 -mt-1">
+                  Keep at 0 for speakers. Increase it if the animation appears before you hear the sound (e.g. Bluetooth headphones).
+                </div>
+              </>
+            )}
+
+            {/* Instrument Selector (hidden in Layer Mode: each layer has its own) */}
+            {!isLayerMode && (
+              <div className="border-t border-gray-700 pt-3 flex items-center gap-3">
+                <label htmlFor="instrument" className="text-sm font-bold whitespace-nowrap">
+                  Instrument:
+                </label>
+                <select
+                  id="instrument"
+                  value={selectedInstrument}
+                  onChange={(e) => setSelectedInstrument(e.target.value)}
+                  className="flex-1 bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-sm"
+                >
+                  {Object.entries(INSTRUMENTS).map(([key, inst]) => (
+                    <option key={key} value={key}>
+                      {inst.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            <div className="border-t border-gray-700 pt-3 space-y-2">
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="metronome"
+                  checked={metronomeEnabled}
+                  onChange={(e) => setMetronomeEnabled(e.target.checked)}
+                  className="w-4 h-4 rounded"
+                />
+                <label htmlFor="metronome" className="text-sm cursor-pointer">
+                  Metronome (click on beats)
+                </label>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="ghostnotes"
+                  checked={ghostNotesEnabled}
+                  onChange={(e) => setGhostNotesEnabled(e.target.checked)}
+                  className="w-4 h-4 rounded"
+                />
+                <label htmlFor="ghostnotes" className="text-sm cursor-pointer">
+                  Ghost Notes (play dashes at low volume)
+                </label>
+              </div>
+              <div className="flex items-center gap-3">
+                <button
+                  role="switch"
+                  aria-checked={hapticsEnabled && hapticsSupported}
+                  aria-label="Haptic feedback"
+                  onClick={toggleHaptics}
+                  disabled={!hapticsSupported}
+                  className={`relative w-11 h-6 rounded-full transition-colors flex-shrink-0 ${
+                    hapticsEnabled && hapticsSupported ? 'bg-green-500' : 'bg-gray-600'
+                  } ${hapticsSupported ? '' : 'opacity-40 cursor-not-allowed'}`}
+                >
+                  <span
+                    className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform ${
+                      hapticsEnabled && hapticsSupported ? 'translate-x-5' : ''
+                    }`}
+                  />
+                </button>
+                <span className="text-sm">
+                  Haptic feedback (vibrate on beats and notes)
+                  {!hapticsSupported && (
+                    <span className="block text-xs text-gray-500">Not supported on this device or browser</span>
+                  )}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="sequencemode"
+                  checked={isSequenceMode}
+                  onChange={toggleSequenceMode}
+                  className="w-4 h-4 rounded"
+                />
+                <label htmlFor="sequencemode" className="text-sm cursor-pointer font-bold">
+                  Sequence Mode (build custom rhythm sequences)
+                </label>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="fusionmode"
+                  checked={isFusionMode}
+                  onChange={toggleFusionMode}
+                  className="w-4 h-4 rounded"
+                />
+                <label htmlFor="fusionmode" className="text-sm cursor-pointer font-bold">
+                  Fusion Mode (combine patterns for complex subdivisions)
+                </label>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="layermode"
+                  checked={isLayerMode}
+                  onChange={toggleLayerMode}
+                  className="w-4 h-4 rounded"
+                />
+                <label htmlFor="layermode" className="text-sm cursor-pointer font-bold">
+                  Layer Mode (play up to 4 patterns at once, each with its own instrument)
+                </label>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="notationmode"
+                  checked={notationMode}
+                  onChange={(e) => setNotationMode(e.target.checked)}
+                  className="w-4 h-4 rounded"
+                />
+                <label htmlFor="notationmode" className="text-sm cursor-pointer font-bold">
+                  Notation Mode (show patterns as musical notation)
+                </label>
+              </div>
+              {notationMode && (
+                <div className="ml-6 space-y-2">
+                  <div className="flex items-center gap-2 text-sm flex-wrap">
+                    <span className="text-gray-400">Dashes shown as:</span>
+                    <div className="flex rounded overflow-hidden border border-gray-600">
+                      <button
+                        onClick={() => setNotationGhost(false)}
+                        className={`px-3 py-1 ${!notationGhost ? 'bg-blue-600' : 'bg-gray-700 hover:bg-gray-600'}`}
+                      >
+                        Rests
+                      </button>
+                      <button
+                        onClick={() => setNotationGhost(true)}
+                        className={`px-3 py-1 ${notationGhost ? 'bg-blue-600' : 'bg-gray-700 hover:bg-gray-600'}`}
+                      >
+                        Ghost notes
+                      </button>
+                    </div>
+                  </div>
+                  <div className="text-xs text-gray-500">
+                    One pattern = one beat = one quarter note. A = quarter note, B = two eighth notes, E = eighth-note triplet, L = four sixteenth notes. Any other number of subdivisions gets a bracket with its number (5, 6, 7...).
+                  </div>
+                </div>
+              )}
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="piemode"
+                  checked={pieMode}
+                  onChange={(e) => setPieMode(e.target.checked)}
+                  className="w-4 h-4 rounded"
+                />
+                <label htmlFor="piemode" className="text-sm cursor-pointer font-bold">
+                  Pie Mode (show patterns as circles)
+                </label>
+              </div>
+              {pieMode && (
+                <div className="ml-6 text-xs text-gray-500">
+                  Each pattern is a circle: one beat = one full turn, clockwise from 12 o'clock. A filled slice is a note, an empty slice is a rest. A white hand sweeps around the circle as the beat plays.
+                </div>
+              )}
+              
+            </div>
+          </div>
+
+          {/* Layer Builder */}
+          {isLayerMode && (
+            <div className="bg-emerald-900/30 border-2 border-emerald-500 rounded-lg p-4 mt-4">
+              <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
+                <h3 className="text-lg font-bold">Layer Mode</h3>
+                <div className="flex gap-2">
+                  <button
+                    onClick={playLayers}
+                    disabled={!hasLayers}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
+                      !hasLayers
+                        ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
+                        : 'bg-emerald-600 hover:bg-emerald-700'
+                    }`}
+                  >
+                    {playKind === 'layers' ? <Pause size={16} /> : <Play size={16} />}
+                    {playKind === 'layers' ? 'Stop' : 'Play'} Layers
+                  </button>
+                  <button
+                    onClick={clearAllLayers}
+                    disabled={!hasLayers}
+                    className={`px-4 py-2 rounded-lg transition-colors ${
+                      !hasLayers
+                        ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
+                        : 'bg-red-600 hover:bg-red-700'
+                    }`}
+                  >
+                    Clear
+                  </button>
+                </div>
+              </div>
+              <div className="text-xs text-gray-400 mb-3">
+                Tap a slot, then tap a pattern below (or your fused pattern) to place it. Each slot plays with its own instrument, all at the same time.
+              </div>
+              {fusedPattern && (
+                <button
+                  onClick={() => assignToLayer(fusedPattern)}
+                  className="w-full text-left rounded-lg p-2 mb-3 border-2 border-blue-400 bg-gray-800 hover:bg-gray-700 transition-colors"
+                >
+                  <div className="text-xs text-blue-300 mb-1">
+                    Your fused pattern: tap to place it in the selected slot
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span
+                      className="text-xs font-bold text-blue-400 flex-shrink-0 truncate"
+                      style={{ minWidth: 24, maxWidth: 56 }}
+                    >
+                      {fusedPattern.letter}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <PatternView
+                        viewId="layer-fused-tray"
+                        pattern={fusedPattern}
+                        registry={registryRef}
+                        size="sm"
+                        bar={false}
+                      />
+                    </div>
+                  </div>
+                </button>
+              )}
+
+              <div className="space-y-2">
+                {layers.map((layer, i) => (
+                  <div
+                    key={i}
+                    data-tile
+                    onClick={() => setActiveLayer(i)}
+                    className={`abel-tile flex items-center gap-2 rounded-lg p-2 border-2 cursor-pointer ${
+                      activeLayer === i ? 'border-emerald-400 bg-gray-700' : 'border-gray-600 bg-gray-800'
+                    }`}
+                  >
+                    <div
+                      className={`w-6 h-6 rounded-full text-xs font-bold flex items-center justify-center flex-shrink-0 ${
+                        activeLayer === i ? 'bg-emerald-500 text-gray-900' : 'bg-gray-600'
+                      }`}
+                    >
+                      {i + 1}
+                    </div>
+
+                    <div className="flex-1 min-w-0">
+                      {layer.pattern ? (
+                        <div className="flex items-center gap-2">
+                          <span
+                            className="text-xs font-bold flex-shrink-0 truncate"
+                            style={{ color: accentFor(layer.pattern.color), minWidth: 24, maxWidth: 56 }}
+                          >
+                            {layer.pattern.letter}
+                          </span>
+                          <div className="flex-1 min-w-0">
+                            <PatternView
+                              viewId={`layer:${i}`}
+                              pattern={layer.pattern}
+                              registry={registryRef}
+                              size="md"
+                            />
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="text-xs text-gray-500 py-3">Empty: tap a pattern below</div>
+                      )}
+                    </div>
+
+                    <select
+                      value={layer.instrument}
+                      onChange={(e) => setLayerInstrument(i, e.target.value)}
+                      className="w-32 flex-shrink-0 bg-gray-700 border border-gray-600 rounded px-1 py-1.5 text-xs"
+                      aria-label={`Instrument for layer ${i + 1}`}
+                    >
+                      {Object.entries(INSTRUMENTS).map(([key, inst]) => (
+                        <option key={key} value={key}>
+                          {inst.name}
+                        </option>
+                      ))}
+                    </select>
+
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        clearLayer(i);
+                      }}
+                      disabled={!layer.pattern}
+                      className={`w-6 h-6 rounded-full text-xs font-bold flex-shrink-0 ${
+                        layer.pattern ? 'bg-red-500 hover:bg-red-600' : 'bg-gray-700 text-gray-600'
+                      }`}
+                      aria-label={`Clear layer ${i + 1}`}
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Sequence Builder */}
+          {isSequenceMode && (
+            <div className="bg-purple-900/30 border-2 border-purple-500 rounded-lg p-4 mt-4">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-lg font-bold flex items-center gap-2">
+                  Rhythm Sequence Builder
+                  <span
+                    ref={seqCountRef}
+                    className="inline-block text-center px-2 py-0.5 rounded-full bg-purple-600 text-sm font-bold"
+                    style={{ minWidth: '1.75rem' }}
+                  >
+                    {sequence.length}
+                  </span>
+                </h3>
+                <div className="flex gap-2">
+                  <button
+                    onClick={playSequence}
+                    disabled={sequence.length === 0}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
+                      sequence.length === 0
+                        ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
+                        : 'bg-purple-600 hover:bg-purple-700'
+                    }`}
+                  >
+                    {playKind === 'sequence' ? <Pause size={16} /> : <Play size={16} />}
+                    {playKind === 'sequence' ? 'Stop' : 'Play'} Sequence
+                  </button>
+                  <button
+                    onClick={clearSequence}
+                    disabled={sequence.length === 0}
+                    className={`px-4 py-2 rounded-lg transition-colors ${
+                      sequence.length === 0
+                        ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
+                        : 'bg-red-600 hover:bg-red-700'
+                    }`}
+                  >
+                    Clear
+                  </button>
+                </div>
+              </div>
+
+              {sequence.length === 0 ? (
+                <div className="text-center py-8 text-gray-400">
+                  Click on patterns below to add them to your sequence
+                </div>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {sequence.map((pattern, index) => (
+                    <div
+                      key={index}
+                      ref={(el) => {
+                        seqTileRefs.current[index] = el;
+                      }}
+                      data-tile
+                      className="abel-tile relative group bg-gray-700 rounded-lg p-3 border-2 border-purple-400"
+                      onPointerDown={(e) => onTilePointerDown(e, index)}
+                      onContextMenu={(e) => e.preventDefault()}
+                      style={{
+                        width: seqTileWidth,
+                        maxWidth: '100%',
+                        flexShrink: 0,
+                        opacity: dragState && dragState.from === index ? 0.35 : 1,
+                        transform: dragState && dragState.from === index ? 'scale(0.96)' : 'none',
+                        userSelect: 'none',
+                        WebkitUserSelect: 'none',
+                        WebkitTouchCallout: 'none',
+                        transition: 'opacity .15s, transform .15s'
+                      }}
+                    >
+                      {dropSide(index) && (
+                        <div
+                          style={{
+                            position: 'absolute',
+                            top: 0,
+                            bottom: 0,
+                            [dropSide(index) === 'after' ? 'right' : 'left']: -6,
+                            width: 3,
+                            borderRadius: 2,
+                            background: '#fff',
+                            boxShadow: '0 0 8px #c084fc',
+                            zIndex: 20
+                          }}
+                        />
+                      )}
+                      <button
+                        onClick={() => removeFromSequence(index)}
+                        className="absolute -top-2 -right-2 w-6 h-6 bg-red-500 hover:bg-red-600 rounded-full text-xs font-bold opacity-0 group-hover:opacity-100 transition-opacity z-10"
+                      >
+                        ×
+                      </button>
+                      <div className="text-xs font-bold mb-1" style={{ color: labelColorFor(pattern.color) }}>
+                        {pattern.letter}
+                      </div>
+                      <PatternView
+                        viewId={`seq:${index}`}
+                        pattern={pattern}
+                        registry={registryRef}
+                        size="sm"
+                      />
+                      <div
+                        className="text-xs text-gray-400 mt-1 font-mono"
+                        style={{ visibility: pattern.binary.length > 4 ? 'visible' : 'hidden' }}
+                      >
+                        {pattern.binary.length} sub.
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Fusion Builder */}
+          {isFusionMode && (
+            <div className="bg-blue-900/30 border-2 border-blue-500 rounded-lg p-4 mt-4">
+              <div className="mb-3">
+                <h3 className="text-lg font-bold mb-2">Pattern Fusion Builder</h3>
+              </div>
+
+              <div className="space-y-3">
+                {/* Selected patterns */}
+                <div>
+                  <div className="text-sm text-gray-400 mb-2">Selected Patterns:</div>
+                  {fusionPatterns.length === 0 ? (
+                    <div className="text-center py-4 text-gray-500 bg-gray-800/50 rounded">
+                      Click on patterns below to add them to fusion
+                    </div>
+                  ) : (
+                    <div className="flex flex-wrap gap-2 bg-gray-800/50 p-3 rounded">
+                      {fusionPatterns.map((pattern, index) => (
+                        <div
+                          key={index}
+                          data-tile
+                          className="abel-tile relative group bg-gray-700 rounded-lg p-2 border border-blue-400"
+                          style={{ minWidth: Math.max(64, pattern.code.split(' ').length * 16 + 20) }}
+                        >
+                          <button
+                            onClick={() => removeFromFusion(index)}
+                            className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 hover:bg-red-600 rounded-full text-xs font-bold opacity-0 group-hover:opacity-100 transition-opacity z-10"
+                          >
+                            ×
+                          </button>
+                          <div className="text-xs font-bold" style={{ color: labelColorFor(pattern.color) }}>
+                            {pattern.letter}
+                          </div>
+                          <div className="mt-1">
+                            <PatternView
+                              viewId={`fpart:${index}`}
+                              pattern={pattern}
+                              registry={registryRef}
+                              size="sm"
+                              bar={false}
+                            />
+                          </div>
+                          <div className="text-xs text-gray-400 font-mono mt-1">{pattern.binary}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Fused result */}
+                {fusedPattern && (
+                  <div>
+                    <div className="text-sm text-gray-400 mb-2">Fused Pattern Result:</div>
+                    <div className="bg-blue-950/50 border-2 border-blue-400 rounded-lg p-4">
+                      <div className="grid md:grid-cols-4 gap-4 mb-4">
+                        <div>
+                          <div className="text-xs text-gray-400 mb-1">Name</div>
+                          <div className="font-bold text-lg text-blue-400">{fusedPattern.letter}</div>
+                        </div>
+                        <div>
+                          <div className="text-xs text-gray-400 mb-1">ABEL Code</div>
+                          <div className="font-mono text-sm">{fusedPattern.code}</div>
+                        </div>
+                        <div>
+                          <div className="text-xs text-gray-400 mb-1">Binary</div>
+                          <div className="font-mono text-sm">{fusedPattern.binary}</div>
+                        </div>
+                        <div>
+                          <div className="text-xs text-gray-400 mb-1">Subdivisions</div>
+                          <div className="font-mono text-sm">{fusedPattern.binary.length}</div>
+                        </div>
+                      </div>
+
+                      {/* Animated visualisation of the fused pattern */}
+                      <div className="mb-4 p-3 bg-gray-900/50 rounded overflow-x-auto">
+                        <div style={{ minWidth: Math.max(160, fusedPattern.code.split(' ').length * 30) }}>
+                          <PatternView
+                            viewId="fused-result"
+                            pattern={fusedPattern}
+                            registry={registryRef}
+                            size="lg"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          onClick={playFusedPattern}
+                          className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
+                        >
+                          {playKind === 'fused' ? <Pause size={16} /> : <Play size={16} />}
+                          {playKind === 'fused' ? 'Stop' : 'Play'} Fused Pattern
+                        </button>
+                        <button
+                          onClick={addFusedToSequence}
+                          className="px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded-lg transition-colors whitespace-nowrap"
+                          title="Add this fused pattern to sequence"
+                        >
+                          Add to Sequence
+                        </button>
+                        <button
+                          onClick={() => {
+                            if (isPlaying) stopPlayback();
+                            assignToLayer(fusedPattern);
+                            setIsFusionMode(false);
+                            setIsSequenceMode(false);
+                            setIsLayerMode(true);
+                          }}
+                          className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 rounded-lg transition-colors whitespace-nowrap"
+                          title="Place this fused pattern in the selected layer slot"
+                        >
+                          Add to Layers
+                        </button>
+                        <button
+                          onClick={clearFusion}
+                          className="px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg transition-colors"
+                        >
+                          Clear
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Code Groups */}
+        <div className="space-y-8">
+          {CODE_GROUPS.map((group, groupIdx) => (
+            <div key={groupIdx} className="bg-gray-800 rounded-lg p-6">
+              <div className="mb-4">
+                <div className="flex items-center justify-between mb-2">
+                  <h2 className="text-2xl font-bold">{group.range}</h2>
+                  <div className="text-sm text-gray-400">{group.name}</div>
+                </div>
+                <div className="flex gap-4 text-sm text-gray-400">
+                  <span>
+                    No. of Symbols: <span className="font-mono">N = {group.n}</span>
+                  </span>
+                  <span>
+                    Total Patterns: <span className="font-mono">2^{group.n} = {group.total}</span>
+                  </span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-3">
+                {group.patterns.map((pattern) => (
+                  <DominoCard
+                    key={pattern.letter}
+                    pattern={pattern}
+                    registry={registryRef}
+                    onClick={() => handlePatternClick(pattern)}
+                    onLongPress={isFusionMode ? undefined : () => startMerge(pattern)}
+                    isMergeSource={!!mergeFirst && mergeFirst.letter === pattern.letter}
+                    isSelected={playKind === 'solo' && selectedPattern?.letter === pattern.letter}
+                    isInSequence={sequence.some((p) => p.letter === pattern.letter && p.binary === pattern.binary)}
+                    isInFusion={fusionPatterns.some((p) => p.letter === pattern.letter && p.binary === pattern.binary)}
+                    isInLayer={layers.some((l) => l.pattern && l.pattern.letter === pattern.letter)}
+                    isSequenceMode={isSequenceMode}
+                    isFusionMode={isFusionMode}
+                    isLayerMode={isLayerMode}
+                  />
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Scale of Values */}
+        <div className="mt-8 bg-gray-800 rounded-lg p-6">
+          <h3 className="text-xl font-bold mb-4">Scale of Values (ABEL)</h3>
+          <div className="space-y-4">
+            {[
+              { letter: 'A', subdivisions: 1, label: 'Whole' },
+              { letter: 'B', subdivisions: 2, label: '1/2' },
+              { letter: 'E', subdivisions: 3, label: '1/3' },
+              { letter: 'L', subdivisions: 4, label: '1/4' }
+            ].map(({ letter, subdivisions, label }) => (
+              <div key={letter} className="flex items-center gap-4">
+                <div className="w-8 font-bold">{letter}</div>
+                <div className="flex-1 h-8 bg-gray-700 rounded relative">
+                  <div className="absolute inset-0 flex">
+                    {Array.from({ length: subdivisions }).map((_, i) => (
+                      <div key={i} className="flex-1 border-r border-gray-600 last:border-r-0" />
+                    ))}
+                  </div>
+                </div>
+                <div className="text-sm text-gray-400 w-32">{label}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Selected Pattern Info */}
+        {infoPattern && (
+          <div className="mt-8 bg-blue-900/30 border border-blue-500 rounded-lg p-6">
+            <h3 className="text-xl font-bold mb-3">Selected Pattern: {infoPattern.letter}</h3>
+            <div className="grid md:grid-cols-3 gap-4">
+              <div>
+                <div className="text-sm text-gray-400 mb-1">ABEL Code</div>
+                <div className="font-mono text-lg">{infoPattern.code}</div>
+              </div>
+              <div>
+                <div className="text-sm text-gray-400 mb-1">Binary</div>
+                <div className="font-mono text-lg">{infoPattern.binary}</div>
+              </div>
+              <div>
+                <div className="text-sm text-gray-400 mb-1">Decimal</div>
+                <div className="font-mono text-lg">{parseInt(infoPattern.binary, 2)}</div>
+              </div>
+            </div>
+
+            <div className="mt-4 p-3 bg-gray-900/50 rounded overflow-x-auto">
+              <div style={{ minWidth: Math.max(160, infoPattern.code.split(' ').length * 30) }}>
+                <PatternView viewId="info" pattern={infoPattern} registry={registryRef} size="lg" />
+              </div>
+            </div>
+
+            <button
+              onClick={stopPlayback}
+              className="mt-4 flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
+            >
+              <Pause size={16} />
+              Stop Loop
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+/* ---- Mount ---- */
+ReactDOM.createRoot(document.getElementById('root')).render(<ABELRhythmDominoes />);
+</script>
+
+<style>
+  #install-bar{position:fixed;left:12px;right:12px;bottom:calc(12px + env(safe-area-inset-bottom,0px));z-index:9999;display:none;align-items:center;gap:10px;background:#1f2937;color:#f9fafb;border:1px solid #374151;border-radius:12px;padding:10px 14px;font:14px system-ui,sans-serif;box-shadow:0 8px 24px rgba(0,0,0,.4);max-width:480px;margin:0 auto}
+  #install-bar button{border:0;border-radius:8px;padding:8px 12px;font:600 14px system-ui,sans-serif;cursor:pointer}
+  #install-go{background:#2563eb;color:#fff}
+  #install-x{background:transparent;color:#9ca3af}
+</style>
+<div id="install-bar" role="dialog" aria-label="Install app">
+  <span id="install-msg" style="flex:1">Install ABEL for quick, offline access.</span>
+  <button id="install-go">Install</button>
+  <button id="install-x" aria-label="Dismiss">✕</button>
+</div>
+<script>
+(function(){
+  var bar=document.getElementById('install-bar'), go=document.getElementById('install-go'),
+      msg=document.getElementById('install-msg'), x=document.getElementById('install-x'), deferred=null;
+  function dismissed(){try{return localStorage.getItem('abel-install-dismissed')==='1'}catch(e){return false}}
+  function standalone(){return window.matchMedia('(display-mode: standalone)').matches||navigator.standalone===true}
+  x.onclick=function(){bar.style.display='none';try{localStorage.setItem('abel-install-dismissed','1')}catch(e){}};
+  if(standalone()||dismissed())return;
+  window.addEventListener('beforeinstallprompt',function(e){
+    e.preventDefault();deferred=e;bar.style.display='flex';
+  });
+  go.onclick=function(){
+    if(!deferred)return;deferred.prompt();
+    deferred.userChoice.finally(function(){deferred=null;bar.style.display='none'});
+  };
+  window.addEventListener('appinstalled',function(){bar.style.display='none'});
+  // iOS Safari has no install prompt: show manual steps.
+  var ua=navigator.userAgent, ios=/iPad|iPhone|iPod/.test(ua)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
+  if(ios&&/Safari/.test(ua)&&!/CriOS|FxiOS/.test(ua)){
+    msg.innerHTML='To install: tap <b>Share</b> <span aria-hidden="true">⬆︎</span>, then <b>Add to Home Screen</b>.';
+    go.style.display='none';bar.style.display='flex';
+  }
+  if('serviceWorker' in navigator){
+    window.addEventListener('load',function(){navigator.serviceWorker.register('sw.js').catch(function(){})});
+  }
+})();
+</script>
+</body>
+</html>
