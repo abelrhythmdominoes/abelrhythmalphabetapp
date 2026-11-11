@@ -2352,16 +2352,30 @@ const ABELRhythmDominoes = () => {
           {showInfo && (
             <div className="bg-gray-800 rounded-lg p-4 mb-4">
               <h3 className="font-bold mb-2">How it works:</h3>
-              <ul className="text-sm text-gray-300 space-y-1">
-                <li>• <strong>Dot (•)</strong> = sound/attack</li>
-                <li>• <strong>Dash (–)</strong> = rest/silence (or ghost note if enabled)</li>
-                <li>• <strong>A</strong> (Pulse) → <strong>B</strong> (2 Halves) → <strong>E</strong> (3 Thirds) → <strong>L</strong> (4 Quarters)</li>
-                <li>• <strong>Single Pattern Mode:</strong> Click a pattern to start loop, click again to stop</li>
-                <li>• <strong>Sequence Mode:</strong> Click patterns to add them to your sequence, press and hold a frame to drag it to a new position, then play the sequence in loop</li>
-                <li>• <strong>Fusion Mode:</strong> Combine patterns to create complex subdivisions (e.g., E+E = sextolet, B+E = quintolet)</li>
-                <li>• <strong>Layer Mode:</strong> Play up to 4 patterns at the same time, each with its own instrument (including patterns built in Fusion Mode)</li>
-                <li>• <strong>Quick Merge:</strong> Press and hold a pattern, then tap a second one to merge them. In Single Pattern Mode the merged pattern plays in a loop, in Sequence Mode it is added to the sequence, and in Layer Mode it goes into the selected slot</li>
-              </ul>
+              <div className="text-sm text-gray-300 space-y-3">
+                <div>
+                  <h4 className="font-bold text-white mb-1">The ABEL Code</h4>
+                  <ul className="space-y-1">
+                    <li>• <strong>Dot (•)</strong> = Sound / Attack</li>
+                    <li>• <strong>Dash (–)</strong> = Rest / Silence (or ghost note if enabled)</li>
+                  </ul>
+                </div>
+                <div>
+                  <h4 className="font-bold text-white mb-1">The ABEL Alphabet</h4>
+                  <ul className="space-y-1">
+                    <li>• <strong>A</strong> (Pulse) → <strong>B</strong> (2 Halves) → <strong>E</strong> (3 Thirds) → <strong>L</strong> (4 Quarters)</li>
+                  </ul>
+                </div>
+                <div>
+                  <h4 className="font-bold text-white mb-1">Modes &amp; Interactions</h4>
+                  <ul className="space-y-1">
+                    <li>• <strong>Single Pattern:</strong> Click a pattern to loop it; click again to stop. Press and hold a pattern, then tap a second one to merge.</li>
+                    <li>• <strong>Sequence Mode:</strong> Click patterns to build a sequence. Press and hold a frame to reorder.</li>
+                    <li>• <strong>Fusion Mode:</strong> Combine patterns for complex subdivisions (e.g., E+E+E = nonuplet).</li>
+                    <li>• <strong>Layer Mode:</strong> Play up to 4 simultaneous patterns, each with its own instrument.</li>
+                  </ul>
+                </div>
+              </div>
             </div>
           )}
 
