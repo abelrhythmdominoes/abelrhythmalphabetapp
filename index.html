@@ -91,6 +91,7 @@ const makeIcon = (name) => {
 };
 const Play = makeIcon('Play');
 const Pause = makeIcon('Pause');
+const Shuffle = makeIcon('Shuffle');
 const Info = makeIcon('Info');
 const Volume2 = makeIcon('Volume2');
 
@@ -1797,6 +1798,24 @@ const ABELRhythmDominoes = () => {
     setSequence([]);
   };
 
+  const shuffleSequence = () => {
+    if (sequence.length < 2) return;
+    const signature = (arr) => arr.map((p) => p.letter + ':' + p.binary).join('|');
+    const original = signature(sequence);
+    const canChange = new Set(sequence.map((p) => p.letter + ':' + p.binary)).size > 1;
+    let next = sequence;
+    // Fisher-Yates; retry so the order really changes whenever that is possible
+    for (let attempt = 0; attempt < 10; attempt++) {
+      next = sequence.slice();
+      for (let i = next.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [next[i], next[j]] = [next[j], next[i]];
+      }
+      if (!canChange || signature(next) !== original) break;
+    }
+    setSequence(next);
+  };
+
   const removeFromSequence = (index) => {
     const next = sequence.filter((_, i) => i !== index);
     setSequence(next);
@@ -2779,7 +2798,7 @@ const ABELRhythmDominoes = () => {
           {/* Sequence Builder */}
           {isSequenceMode && (
             <div className="bg-purple-900/30 border-2 border-purple-500 rounded-lg p-4 mt-4">
-              <div className="flex items-center justify-between mb-3">
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
                 <h3 className="text-lg font-bold flex items-center gap-2">
                   Rhythm Sequence Builder
                   <span
@@ -2790,7 +2809,7 @@ const ABELRhythmDominoes = () => {
                     {sequence.length}
                   </span>
                 </h3>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   <button
                     onClick={playSequence}
                     disabled={sequence.length === 0}
@@ -2802,6 +2821,19 @@ const ABELRhythmDominoes = () => {
                   >
                     {playKind === 'sequence' ? <Pause size={16} /> : <Play size={16} />}
                     {playKind === 'sequence' ? 'Stop' : 'Play'} Sequence
+                  </button>
+                  <button
+                    onClick={shuffleSequence}
+                    disabled={sequence.length < 2}
+                    title="Randomly shuffle the order of the patterns"
+                    className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
+                      sequence.length < 2
+                        ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
+                        : 'bg-indigo-600 hover:bg-indigo-700'
+                    }`}
+                  >
+                    <Shuffle size={16} />
+                    Shuffle
                   </button>
                   <button
                     onClick={clearSequence}
