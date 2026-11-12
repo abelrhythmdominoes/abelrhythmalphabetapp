@@ -94,6 +94,7 @@ const Pause = makeIcon('Pause');
 const Shuffle = makeIcon('Shuffle');
 const Info = makeIcon('Info');
 const Volume2 = makeIcon('Volume2');
+const Download = makeIcon('Download');
 
 /* ---- App (unchanged from the artifact) ---- */
 /* =====================================================================
@@ -167,6 +168,233 @@ const buildFused = (list) => ({
   color: '#60a5fa',
   parts: list
 });
+
+/* =====================================================================
+   EXPORT – MusicXML (MuseScore, Dorico, Finale, Sibelius…) and MIDI
+   One beat = one note value `unit` (0 whole, 1 half, 2 quarter, 3 eighth).
+   A pattern with n steps splits its beat into n equal parts, written with
+   the same note value as the notation view, with a tuplet when n is not a
+   power of two. "•" = note, "–" = rest (or a parenthesised ghost note).
+   ===================================================================== */
+const EXPORT_INST = {
+  snare:   { name: 'Snare Drum', gm: 38, step: 'C', oct: 5, head: 'normal' },
+  kick:    { name: 'Kick Drum',  gm: 36, step: 'F', oct: 4, head: 'normal' },
+  hihat:   { name: 'Hi-Hat',     gm: 42, step: 'G', oct: 5, head: 'x' },
+  clap:    { name: 'Clap',       gm: 39, step: 'D', oct: 5, head: 'x' },
+  cowbell: { name: 'Cowbell',    gm: 56, step: 'A', oct: 5, head: 'triangle' },
+  tom:     { name: 'Tom',        gm: 47, step: 'A', oct: 4, head: 'normal' },
+  rim:     { name: 'Rim Shot',   gm: 37, step: 'C', oct: 5, head: 'x' },
+  bass:    { name: 'Bass', pitched: true, step: 'E', oct: 2, midi: 40, program: 34 }
+};
+const NOTE_TYPES = ['whole', 'half', 'quarter', 'eighth', '16th', '32nd', '64th', '128th', '256th', '512th', '1024th'];
+const gcdN = (a, b) => (b ? gcdN(b, a % b) : a);
+const lcmN = (a, b) => (a / gcdN(a, b)) * b;
+const xmlEsc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+const stepsOf = (p) => p.code.split(' ');
+
+// score = { title, tempo, beatsPerBar, unit, ghost, parts: [{ instrument, beats: [pattern | null] }] }
+const toMusicXML = (sc) => {
+  const Q = 4 / Math.pow(2, sc.unit);                 // quarter notes per beat
+  const counts = [1];
+  sc.parts.forEach((p) => p.beats.forEach((b) => { if (b) counts.push(stepsOf(b).length); }));
+  const D = 2 * counts.reduce(lcmN, 1);               // divisions per quarter note
+  const beatDiv = Q * D;
+  const bpb = sc.beatsPerBar;
+
+  const partList = sc.parts.map((p, i) => {
+    const inst = EXPORT_INST[p.instrument] || EXPORT_INST.snare;
+    const id = 'P' + (i + 1);
+    const midi = inst.pitched
+      ? `<midi-channel>${(i % 9) + 1}</midi-channel><midi-program>${inst.program}</midi-program>`
+      : `<midi-channel>10</midi-channel><midi-program>1</midi-program><midi-unpitched>${inst.gm + 1}</midi-unpitched>`;
+    return `<score-part id="${id}"><part-name>${xmlEsc(inst.name)}</part-name>` +
+      `<score-instrument id="${id}-I1"><instrument-name>${xmlEsc(inst.name)}</instrument-name></score-instrument>` +
+      `<midi-instrument id="${id}-I1">${midi}</midi-instrument></score-part>`;
+  }).join('');
+
+  const parts = sc.parts.map((p, pi) => {
+    const inst = EXPORT_INST[p.instrument] || EXPORT_INST.snare;
+    const id = 'P' + (pi + 1);
+
+    const note = (o) => {
+      const pitchedOrDrum = o.sound || o.ghost;
+      let s = '<note>';
+      if (pitchedOrDrum) {
+        s += inst.pitched
+          ? `<pitch><step>${inst.step}</step><octave>${inst.oct}</octave></pitch>`
+          : `<unpitched><display-step>${inst.step}</display-step><display-octave>${inst.oct}</display-octave></unpitched>`;
+      } else {
+        s += '<rest/>';
+      }
+      s += `<duration>${o.dur}</duration>`;
+      if (pitchedOrDrum) s += `<instrument id="${id}-I1"/>`;
+      s += `<voice>1</voice><type>${o.type}</type>`;
+      if (o.tm) s += `<time-modification><actual-notes>${o.tm[0]}</actual-notes><normal-notes>${o.tm[1]}</normal-notes></time-modification>`;
+      if (pitchedOrDrum) {
+        const head = inst.pitched ? 'normal' : inst.head;
+        if (o.ghost) s += `<notehead parentheses="yes">${head}</notehead>`;
+        else if (head !== 'normal') s += `<notehead>${head}</notehead>`;
+      }
+      if (o.tuplet) s += `<notations><tuplet type="${o.tuplet}" bracket="yes" show-number="actual"/></notations>`;
+      return s + '</note>';
+    };
+
+    const beatXml = (pat) => {
+      if (!pat) return note({ sound: false, ghost: false, dur: beatDiv, type: NOTE_TYPES[sc.unit] });
+      const sy = stepsOf(pat);
+      const n = sy.length;
+      const lg = Math.floor(Math.log2(n));
+      const m = Math.pow(2, lg);
+      const type = NOTE_TYPES[Math.min(sc.unit + lg, NOTE_TYPES.length - 1)];
+      const dur = beatDiv / n;
+      let s = `<direction placement="above"><direction-type><words>${xmlEsc(pat.letter)}</words></direction-type></direction>`;
+      sy.forEach((c, i) => {
+        const hit = c === '•';
+        s += note({
+          sound: hit,
+          ghost: !hit && sc.ghost,
+          dur,
+          type,
+          tm: n !== m ? [n, m] : null,
+          tuplet: n !== m ? (i === 0 ? 'start' : i === n - 1 ? 'stop' : null) : null
+        });
+      });
+      return s;
+    };
+
+    const nBars = p.beats.length / bpb;
+    let x = `<part id="${id}">`;
+    for (let mi = 0; mi < nBars; mi++) {
+      x += `<measure number="${mi + 1}">`;
+      if (mi === 0) {
+        x += `<attributes><divisions>${D}</divisions><key><fifths>0</fifths></key>` +
+          `<time><beats>${bpb}</beats><beat-type>${Math.pow(2, sc.unit)}</beat-type></time>` +
+          (inst.pitched ? '<clef><sign>F</sign><line>4</line></clef>' : '<clef><sign>percussion</sign><line>2</line></clef>') +
+          '</attributes>';
+        if (pi === 0) {
+          x += `<direction placement="above"><direction-type><metronome><beat-unit>${NOTE_TYPES[sc.unit]}</beat-unit>` +
+            `<per-minute>${sc.tempo}</per-minute></metronome></direction-type><sound tempo="${sc.tempo * Q}"/></direction>`;
+        }
+      }
+      for (let b = 0; b < bpb; b++) x += beatXml(p.beats[mi * bpb + b]);
+      if (mi === nBars - 1) x += '<barline location="right"><bar-style>light-heavy</bar-style></barline>';
+      x += '</measure>';
+    }
+    return x + '</part>';
+  }).join('');
+
+  return '<?xml version="1.0" encoding="UTF-8"?>\n' +
+    '<!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 3.1 Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">\n' +
+    '<score-partwise version="3.1">' +
+    `<work><work-title>${xmlEsc(sc.title)}</work-title></work>` +
+    '<identification><encoding><software>ABEL Rhythm Alphabet</software></encoding></identification>' +
+    `<part-list>${partList}</part-list>${parts}</score-partwise>`;
+};
+
+const toMidi = (sc) => {
+  const TPQ = 960;
+  const Q = 4 / Math.pow(2, sc.unit);
+  const beatTicks = Q * TPQ;
+  const enc = new TextEncoder();
+  const vlq = (v) => { const o = [v & 127]; while ((v >>= 7)) o.unshift((v & 127) | 128); return o; };
+  const u32 = (v) => [(v >>> 24) & 255, (v >>> 16) & 255, (v >>> 8) & 255, v & 255];
+  const u16 = (v) => [(v >>> 8) & 255, v & 255];
+  const chunk = (tag, data) => [...enc.encode(tag), ...u32(data.length), ...data];
+  const track = (events) => {
+    events.sort((a, b) => a.tick - b.tick || a.order - b.order);
+    const out = [];
+    let last = 0;
+    events.forEach((e) => { out.push(...vlq(e.tick - last), ...e.bytes); last = e.tick; });
+    out.push(0, 0xff, 0x2f, 0);
+    return chunk('MTrk', out);
+  };
+  const meta = (type, data) => [0xff, type, ...vlq(data.length), ...data];
+
+  const mpqn = Math.round(60000000 / (sc.tempo * Q));
+  const head = [
+    { tick: 0, order: 0, bytes: meta(0x03, [...enc.encode(sc.title)]) },
+    { tick: 0, order: 1, bytes: meta(0x51, [(mpqn >> 16) & 255, (mpqn >> 8) & 255, mpqn & 255]) },
+    { tick: 0, order: 2, bytes: meta(0x58, [sc.beatsPerBar, sc.unit, 24, 8]) }
+  ];
+  const tracks = [track(head)];
+
+  sc.parts.forEach((p, pi) => {
+    const inst = EXPORT_INST[p.instrument] || EXPORT_INST.snare;
+    const ch = inst.pitched ? pi % 9 : 9;
+    const key = inst.pitched ? inst.midi : inst.gm;
+    const ev = [{ tick: 0, order: 0, bytes: meta(0x03, [...enc.encode(inst.name)]) }];
+    if (inst.pitched) ev.push({ tick: 0, order: 1, bytes: [0xc0 | ch, inst.program - 1] });
+    p.beats.forEach((pat, bi) => {
+      if (!pat) return;
+      const sy = stepsOf(pat);
+      const n = sy.length;
+      sy.forEach((c, i) => {
+        const hit = c === '•';
+        if (!hit && !sc.ghost) return;
+        const start = Math.round(bi * beatTicks + (i * beatTicks) / n);
+        const len = Math.max(10, Math.round((beatTicks / n) * 0.9));
+        const vel = hit ? 100 : 40;
+        ev.push({ tick: start, order: 1, bytes: [0x90 | ch, key, vel] });
+        ev.push({ tick: start + len, order: 0, bytes: [0x80 | ch, key, 0] });
+      });
+    });
+    tracks.push(track(ev));
+  });
+
+  const header = chunk('MThd', [...u16(1), ...u16(tracks.length), ...u16(TPQ)]);
+  return new Uint8Array([...header, ...tracks.flat()]);
+};
+
+// Share sheet on touch devices (installed PWA), plain download elsewhere.
+const saveExport = async (data, mime, filename) => {
+  const blob = new Blob([data], { type: mime });
+  try {
+    const coarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+    if (coarse && navigator.canShare) {
+      const file = new File([blob], filename, { type: mime });
+      if (navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file], title: filename });
+        return;
+      }
+    }
+  } catch (e) {
+    if (e && e.name === 'AbortError') return;
+  }
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+};
+
+function ExportButtons({ getScore, disabled, className = '' }) {
+  const run = (kind) => {
+    const sc = getScore();
+    if (!sc) return;
+    if (kind === 'xml') saveExport(toMusicXML(sc), 'application/vnd.recordare.musicxml+xml', sc.fileName + '.musicxml');
+    else saveExport(toMidi(sc), 'audio/midi', sc.fileName + '.mid');
+  };
+  const cls = `flex items-center gap-2 px-4 py-2 rounded-lg transition-colors whitespace-nowrap ${
+    disabled ? 'bg-gray-700 text-gray-500 cursor-not-allowed' : 'bg-sky-600 hover:bg-sky-700'
+  } ${className}`;
+  return (
+    <>
+      <button onClick={() => run('xml')} disabled={disabled} className={cls}
+        title="Export as MusicXML – opens directly in MuseScore">
+        <Download size={16} />
+        MuseScore
+      </button>
+      <button onClick={() => run('midi')} disabled={disabled} className={cls}
+        title="Export as a standard MIDI file">
+        <Download size={16} />
+        MIDI
+      </button>
+    </>
+  );
+}
 
 /* =====================================================================
    VISUAL STYLES (animation states are driven by the audio clock)
@@ -2315,6 +2543,30 @@ const ABELRhythmDominoes = () => {
   const seqMaxSteps = sequence.reduce((m, p) => Math.max(m, p.code.split(' ').length), 1);
   const seqTileWidth = Math.max(84, seqMaxSteps * 16 + 28);
 
+  // Build the score handed to the MuseScore / MIDI exporters (4 bars for looping modes, like the playback)
+  const makeScore = (kind) => {
+    const bpb = Math.max(1, beatsPerBar);
+    const common = { tempo, beatsPerBar: bpb, unit: noteUnit, ghost: notationGhost };
+    const loop = (pat) => Array.from({ length: bpb * 4 }, () => pat);
+    if (kind === 'sequence') {
+      if (!sequence.length) return null;
+      const beats = [...sequence];
+      while (beats.length % bpb) beats.push(null);
+      return { ...common, fileName: 'abel-sequence', title: 'ABEL Rhythm Alphabet – Sequence',
+        parts: [{ instrument: selectedInstrument, beats }] };
+    }
+    if (kind === 'fused') {
+      if (!fusedPattern) return null;
+      return { ...common, fileName: 'abel-fused-' + fusedPattern.letter.replace(/[^A-Za-z0-9]/g, ''),
+        title: 'ABEL Rhythm Alphabet – ' + fusedPattern.letter,
+        parts: [{ instrument: selectedInstrument, beats: loop(fusedPattern) }] };
+    }
+    const active = layers.filter((l) => l.pattern);
+    if (!active.length) return null;
+    return { ...common, fileName: 'abel-layers', title: 'ABEL Rhythm Alphabet – Layers',
+      parts: active.map((l) => ({ instrument: l.instrument, beats: loop(l.pattern) })) };
+  };
+
   const infoPattern = playKind === 'solo' ? selectedPattern : playKind === 'fused' ? fusedPattern : null;
 
   /* ---------------- Render ---------------- */
@@ -2804,6 +3056,7 @@ const ABELRhythmDominoes = () => {
                     {playKind === 'layers' ? <Pause size={16} /> : <Play size={16} />}
                     {playKind === 'layers' ? 'Stop' : 'Play'} Layers
                   </button>
+                  <ExportButtons getScore={() => makeScore('layers')} disabled={!hasLayers} />
                   <button
                     onClick={clearAllLayers}
                     disabled={!hasLayers}
@@ -2948,6 +3201,7 @@ const ABELRhythmDominoes = () => {
                     {playKind === 'sequence' ? <Pause size={16} /> : <Play size={16} />}
                     {playKind === 'sequence' ? 'Stop' : 'Play'} Sequence
                   </button>
+                  <ExportButtons getScore={() => makeScore('sequence')} disabled={sequence.length === 0} />
                   <button
                     onClick={shuffleSequence}
                     disabled={sequence.length < 2}
@@ -3139,6 +3393,7 @@ const ABELRhythmDominoes = () => {
                           {playKind === 'fused' ? <Pause size={16} /> : <Play size={16} />}
                           {playKind === 'fused' ? 'Stop' : 'Play'} Fused Pattern
                         </button>
+                        <ExportButtons getScore={() => makeScore('fused')} disabled={!fusedPattern} />
                         <button
                           onClick={addFusedToSequence}
                           className="px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded-lg transition-colors whitespace-nowrap"
