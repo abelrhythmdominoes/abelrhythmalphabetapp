@@ -1798,23 +1798,68 @@ const ABELRhythmDominoes = () => {
     setSequence([]);
   };
 
+  // Frames glide from their old slot to their new one after a shuffle (FLIP technique)
+  const shuffleFlipRef = useRef(null); // { rects: [...old positions], order: [...old index of each new slot] }
+
   const shuffleSequence = () => {
     if (sequence.length < 2) return;
-    const signature = (arr) => arr.map((p) => p.letter + ':' + p.binary).join('|');
-    const original = signature(sequence);
-    const canChange = new Set(sequence.map((p) => p.letter + ':' + p.binary)).size > 1;
-    let next = sequence;
-    // Fisher-Yates; retry so the order really changes whenever that is possible
+    const n = sequence.length;
+    const key = (p) => p.letter + ':' + p.binary;
+    const canChange = new Set(sequence.map(key)).size > 1;
+    const same = (order) => order.every((from, i) => key(sequence[from]) === key(sequence[i]));
+    let order = sequence.map((_, i) => i);
+    // Fisher-Yates on the positions; retry so the order really changes whenever that is possible
     for (let attempt = 0; attempt < 10; attempt++) {
-      next = sequence.slice();
-      for (let i = next.length - 1; i > 0; i--) {
+      order = sequence.map((_, i) => i);
+      for (let i = n - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
-        [next[i], next[j]] = [next[j], next[i]];
+        [order[i], order[j]] = [order[j], order[i]];
       }
-      if (!canChange || signature(next) !== original) break;
+      if (!canChange || !same(order)) break;
     }
-    setSequence(next);
+
+    // remember where every frame is now, so it can slide to its new place after the re-render
+    const reduceMotion =
+      typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    shuffleFlipRef.current = reduceMotion
+      ? null
+      : {
+          order,
+          rects: seqTileRefs.current.slice(0, n).map((el) => (el ? el.getBoundingClientRect() : null))
+        };
+
+    if (hapticsOnRef.current) safeVibrate([14, 45, 14]); // short double pulse
+    setSequence(order.map((from) => sequence[from]));
   };
+
+  React.useLayoutEffect(() => {
+    const flip = shuffleFlipRef.current;
+    if (!flip) return;
+    shuffleFlipRef.current = null;
+    flip.order.forEach((from, i) => {
+      const el = seqTileRefs.current[i];
+      const old = flip.rects[from];
+      if (!el || !old || !el.animate) return;
+      const now = el.getBoundingClientRect();
+      const dx = old.left - now.left;
+      const dy = old.top - now.top;
+      if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
+      el.style.zIndex = '5'; // keep moving frames above their neighbours
+      const a = el.animate(
+        [
+          { transform: `translate(${dx}px, ${dy}px) scale(1)` },
+          { transform: `translate(${dx / 2}px, ${dy / 2}px) scale(1.06)`, offset: 0.5 },
+          { transform: 'translate(0, 0) scale(1)' }
+        ],
+        { duration: 380, easing: 'cubic-bezier(.22,.9,.28,1)' }
+      );
+      const done = () => {
+        el.style.zIndex = '';
+      };
+      a.onfinish = done;
+      a.oncancel = done;
+    });
+  }, [sequence]);
 
   const removeFromSequence = (index) => {
     const next = sequence.filter((_, i) => i !== index);
