@@ -413,6 +413,9 @@ const CSS = `
 .abel-beat[data-state="on"]{background:#60a5fa;box-shadow:0 0 10px #60a5fa;transform:scale(1.25)}
 .abel-beat[data-state="down"]{background:#4ade80;box-shadow:0 0 12px #4ade80;transform:scale(1.4)}
 .abel-beat[data-muted="1"]{opacity:.5}
+@keyframes abel-shuffle-spin{0%{transform:rotate(0) scale(1)}50%{transform:rotate(180deg) scale(1.35)}100%{transform:rotate(360deg) scale(1)}}
+.abel-shuffle-spin{animation:abel-shuffle-spin .55s ease-in-out}
+@media (prefers-reduced-motion:reduce){.abel-shuffle-spin{animation:none}}
 `;
 
 const DIMS = {
@@ -1425,16 +1428,17 @@ const playInstrument = (ctx, time, instrument, isGhost, dest, samples, voices, l
   src.start(time);
 };
 
-const playClick = (ctx, time, isDownbeat, dest) => {
+const playClick = (ctx, time, isDownbeat, dest, isSub = false) => {
   const osc = ctx.createOscillator();
   const gain = ctx.createGain();
   osc.connect(gain);
   gain.connect(dest);
-  osc.frequency.value = isDownbeat ? 800 : 1200;
+  // Subdivision clicks (2nd, 3rd, 4th click of a beat) are softer and lower than the beat click
+  osc.frequency.value = isSub ? 1000 : isDownbeat ? 800 : 1200;
   osc.type = 'sine';
-  const dur = 0.04;
+  const dur = isSub ? 0.03 : 0.04;
   gain.gain.setValueAtTime(0, time);
-  gain.gain.linearRampToValueAtTime(isDownbeat ? 0.25 : 0.15, time + 0.001);
+  gain.gain.linearRampToValueAtTime(isSub ? 0.07 : isDownbeat ? 0.25 : 0.15, time + 0.001);
   gain.gain.exponentialRampToValueAtTime(0.001, time + dur);
   osc.start(time);
   osc.stop(time + dur);
@@ -1464,6 +1468,7 @@ const ABELRhythmDominoes = () => {
   const [showInfo, setShowInfo] = useState(true);
   const [tempo, setTempo] = useState(120);
   const [metronomeEnabled, setMetronomeEnabled] = useState(true);
+  const [clicksPerBeat, setClicksPerBeat] = useState(1); // metronome clicks per beat: 1-4
   const [ghostNotesEnabled, setGhostNotesEnabled] = useState(true);
   const [syncOffset, setSyncOffset] = useState(0);
   const [showSync, setShowSync] = useState(false);
@@ -1584,6 +1589,7 @@ const ABELRhythmDominoes = () => {
   settingsRef.current = {
     tempo,
     metronome: metronomeEnabled,
+    clicks: clicksPerBeat,
     ghost: ghostNotesEnabled,
     instrument: selectedInstrument,
     sync: syncOffset,
@@ -1785,7 +1791,12 @@ const ABELRhythmDominoes = () => {
     // 2) Metronome click
     const beatPos = beatCountRef.current % Math.max(1, s.beats);
     beatCountRef.current += 1;
-    if (s.metronome) playClick(ctx, t, beatPos === 0, dest);
+    if (s.metronome) {
+      const clicks = Math.max(1, Math.min(4, s.clicks || 1));
+      for (let k = 0; k < clicks; k++) {
+        playClick(ctx, t + (k * beat) / clicks, beatPos === 0, dest, k > 0);
+      }
+    }
 
     // 3) Audio for every track + matching visual timeline
     const tracks = defs.map((def) => {
@@ -2124,23 +2135,66 @@ const ABELRhythmDominoes = () => {
     setSequence([]);
   };
 
+  const [shuffling, setShuffling] = useState(false);
+  const shuffleFlipRef = useRef(null);
+  const [shuffleTick, setShuffleTick] = useState(0);
+
   const shuffleSequence = () => {
     if (sequence.length < 2) return;
-    const signature = (arr) => arr.map((p) => p.letter + ':' + p.binary).join('|');
+    const key = (p) => p.letter + ':' + p.binary;
+    const signature = (arr) => arr.map(key).join('|');
     const original = signature(sequence);
-    const canChange = new Set(sequence.map((p) => p.letter + ':' + p.binary)).size > 1;
-    let next = sequence;
-    // Fisher-Yates; retry so the order really changes whenever that is possible
+    const canChange = new Set(sequence.map(key)).size > 1;
+    // Shuffle the INDICES (Fisher-Yates) so we know where each frame travels from / to;
+    // retry so the order really changes whenever that is possible
+    let order = sequence.map((_, i) => i);
     for (let attempt = 0; attempt < 10; attempt++) {
-      next = sequence.slice();
-      for (let i = next.length - 1; i > 0; i--) {
+      order = sequence.map((_, i) => i);
+      for (let i = order.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
-        [next[i], next[j]] = [next[j], next[i]];
+        [order[i], order[j]] = [order[j], order[i]];
       }
-      if (!canChange || signature(next) !== original) break;
+      if (!canChange || signature(order.map((i) => sequence[i])) !== original) break;
     }
-    setSequence(next);
+    // Remember where every tile is now; the animation runs right after the new order renders
+    const rects = seqTileRefs.current.slice(0, sequence.length).map((el) => (el ? el.getBoundingClientRect() : null));
+    shuffleFlipRef.current = { order, rects };
+    setSequence(order.map((i) => sequence[i]));
+    setShuffleTick((t) => t + 1);
+    setShuffling(true);
+    setTimeout(() => setShuffling(false), 650);
   };
+
+  // FLIP animation: each frame flies from its old slot to its new one
+  React.useLayoutEffect(() => {
+    const data = shuffleFlipRef.current;
+    if (!data) return;
+    shuffleFlipRef.current = null;
+    try {
+      if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+      const { order, rects } = data;
+      order.forEach((oldIdx, newIdx) => {
+        const el = seqTileRefs.current[newIdx];
+        const from = rects[oldIdx];
+        if (!el || !from || !el.animate) return;
+        const to = el.getBoundingClientRect();
+        const dx = from.left - to.left;
+        const dy = from.top - to.top;
+        const tilt = (Math.random() * 2 - 1) * 8;
+        const moved = dx !== 0 || dy !== 0;
+        el.animate(
+          [
+            { transform: `translate(${dx}px, ${dy}px) rotate(0deg) scale(1)`, zIndex: 30, offset: 0 },
+            { transform: `translate(${dx * 0.45}px, ${dy * 0.45 - (moved ? 14 : 0)}px) rotate(${tilt}deg) scale(1.1)`, zIndex: 30, offset: 0.45 },
+            { transform: 'translate(0, 0) rotate(0deg) scale(1)', zIndex: 30, offset: 1 }
+          ],
+          { duration: 520, delay: Math.min(newIdx * 25, 200), easing: 'cubic-bezier(.3,.7,.3,1)', fill: 'backwards' }
+        );
+      });
+    } catch (e) {
+      /* animation is cosmetic: never let it break the app */
+    }
+  }, [shuffleTick]);
 
   const removeFromSequence = (index) => {
     const next = sequence.filter((_, i) => i !== index);
@@ -2895,6 +2949,25 @@ const ABELRhythmDominoes = () => {
                   Metronome (click on beats)
                 </label>
               </div>
+              <div className={`flex items-center gap-3 flex-wrap pl-6 ${metronomeEnabled ? '' : 'opacity-50'}`}>
+                <span className="text-sm text-gray-400">Clicks per beat</span>
+                <div className="flex gap-1" role="radiogroup" aria-label="Metronome clicks per beat">
+                  {[1, 2, 3, 4].map((n) => (
+                    <button
+                      key={n}
+                      role="radio"
+                      aria-checked={clicksPerBeat === n}
+                      disabled={!metronomeEnabled}
+                      onClick={() => setClicksPerBeat(n)}
+                      className={`w-9 h-8 rounded font-bold text-sm transition-colors ${
+                        clicksPerBeat === n ? 'bg-blue-600 text-white' : 'bg-gray-700 hover:bg-gray-600'
+                      } ${metronomeEnabled ? '' : 'cursor-not-allowed'}`}
+                    >
+                      {n}
+                    </button>
+                  ))}
+                </div>
+              </div>
               <div className="flex items-center gap-2">
                 <input
                   type="checkbox"
@@ -3043,11 +3116,11 @@ const ABELRhythmDominoes = () => {
             <div className="bg-emerald-900/30 border-2 border-emerald-500 rounded-lg p-4 mt-4">
               <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
                 <h3 className="text-lg font-bold">Layer Mode</h3>
-                <div className="flex gap-2">
+                <div className="grid grid-cols-2 gap-2 w-full sm:flex sm:w-auto">
                   <button
                     onClick={playLayers}
                     disabled={!hasLayers}
-                    className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
+                    className={`flex items-center justify-center gap-2 px-4 py-2 rounded-lg whitespace-nowrap transition-colors ${
                       !hasLayers
                         ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
                         : 'bg-emerald-600 hover:bg-emerald-700'
@@ -3056,11 +3129,11 @@ const ABELRhythmDominoes = () => {
                     {playKind === 'layers' ? <Pause size={16} /> : <Play size={16} />}
                     {playKind === 'layers' ? 'Stop' : 'Play'} Layers
                   </button>
-                  <ExportButtons getScore={() => makeScore('layers')} disabled={!hasLayers} />
+                  <ExportButtons getScore={() => makeScore('layers')} disabled={!hasLayers} className="justify-center" />
                   <button
                     onClick={clearAllLayers}
                     disabled={!hasLayers}
-                    className={`px-4 py-2 rounded-lg transition-colors ${
+                    className={`px-4 py-2 rounded-lg whitespace-nowrap transition-colors ${
                       !hasLayers
                         ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
                         : 'bg-red-600 hover:bg-red-700'
@@ -3212,7 +3285,9 @@ const ABELRhythmDominoes = () => {
                         : 'bg-indigo-600 hover:bg-indigo-700'
                     }`}
                   >
-                    <Shuffle size={16} />
+                    <span className={shuffling ? 'abel-shuffle-spin inline-flex' : 'inline-flex'}>
+                      <Shuffle size={16} />
+                    </span>
                     Shuffle
                   </button>
                   <button
