@@ -445,6 +445,10 @@ const CSS = `
 .abel-beat[data-state="on"]{background:#60a5fa;box-shadow:0 0 10px #60a5fa;transform:scale(1.25)}
 .abel-beat[data-state="down"]{background:#4ade80;box-shadow:0 0 12px #4ade80;transform:scale(1.4)}
 .abel-beat[data-muted="1"]{opacity:.5}
+.abel-barline{position:absolute;left:-6px;top:0;bottom:0;width:3px;border-radius:2px;background:rgba(216,180,254,.85);pointer-events:none}
+.abel-barnum{display:inline-block;margin-right:6px;padding:0 5px;border-radius:9999px;background:rgba(216,180,254,.28);color:#e9d5ff;font-size:10px;line-height:16px;font-weight:700}
+.abel-light .abel-barline{background:rgba(109,40,217,.7)}
+.abel-light .abel-barnum{background:rgba(109,40,217,.16);color:#5b21b6}
 @keyframes abel-shuffle-spin{0%{transform:rotate(0) scale(1)}50%{transform:rotate(180deg) scale(1.35)}100%{transform:rotate(360deg) scale(1)}}
 .abel-shuffle-spin{animation:abel-shuffle-spin .55s ease-in-out}
 @media (prefers-reduced-motion:reduce){.abel-shuffle-spin{animation:none}}
@@ -2228,6 +2232,34 @@ const ABELRhythmDominoes = () => {
     }
   }, [shuffleTick]);
 
+  // ---------- Bar lines in the sequence (a separator every N frames) ----------
+  const [barPrefs, setBarPrefs] = useState(() => {
+    const d = { on: false, size: 4, numbers: true, frame: 'sm' };
+    try {
+      const v = JSON.parse(localStorage.getItem('abel:bars') || 'null');
+      if (v && typeof v === 'object') {
+        return {
+          on: !!v.on,
+          size: Math.max(1, Math.min(16, Math.round(Number(v.size)) || 4)),
+          numbers: v.numbers !== false,
+          frame: ['sm', 'md', 'lg'].includes(v.frame) ? v.frame : 'sm'
+        };
+      }
+    } catch (e) {
+      /* no saved preference */
+    }
+    return d;
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem('abel:bars', JSON.stringify(barPrefs));
+    } catch (e) {
+      /* preference could not be saved: ignore */
+    }
+  }, [barPrefs]);
+  const setBarSize = (fn) =>
+    setBarPrefs((b) => ({ ...b, size: Math.max(1, Math.min(16, typeof fn === 'function' ? fn(b.size) : fn)) }));
+
   // ---------- Save & share ----------
   const [savedList, setSavedList] = useState(() => readSaved());
   const [saveName, setSaveName] = useState('');
@@ -2244,7 +2276,8 @@ const ABELRhythmDominoes = () => {
     t: tempo,
     b: beatsPerBar,
     i: selectedInstrument,
-    c: clicksPerBeat
+    c: clicksPerBeat,
+    x: barPrefs.on ? barPrefs.size : 0
   });
 
   // Put a saved / shared sequence (and its settings) on screen
@@ -2263,6 +2296,11 @@ const ABELRhythmDominoes = () => {
     if (snap.i && INSTRUMENTS[snap.i]) setSelectedInstrument(snap.i);
     const c = Math.round(Number(snap.c));
     if (c >= 1 && c <= 4) setClicksPerBeat(c);
+    if (snap.x != null && snap.x !== '') {
+      const x = Math.round(Number(snap.x));
+      if (x >= 1 && x <= 16) setBarPrefs((b) => ({ ...b, on: true, size: x }));
+      else if (x === 0) setBarPrefs((b) => ({ ...b, on: false }));
+    }
     return true;
   };
 
@@ -2315,7 +2353,7 @@ const ABELRhythmDominoes = () => {
       if (!h) return;
       const p = new URLSearchParams(h);
       if (!p.get('s')) return;
-      const ok = applySnapshot({ s: p.get('s'), t: p.get('t'), b: p.get('b'), i: p.get('i'), c: p.get('c') });
+      const ok = applySnapshot({ s: p.get('s'), t: p.get('t'), b: p.get('b'), i: p.get('i'), c: p.get('c'), x: p.get('x') });
       try {
         history.replaceState(null, '', window.location.pathname + window.location.search); // tidy the address bar
       } catch (e) {
@@ -2727,7 +2765,13 @@ const ABELRhythmDominoes = () => {
 
   // All sequencer frames share the size of the longest pattern in the sequence
   const seqMaxSteps = sequence.reduce((m, p) => Math.max(m, p.code.split(' ').length), 1);
-  const seqTileWidth = Math.max(84, seqMaxSteps * 16 + 28);
+  const FRAME_SPEC = {
+    sm: { step: 16, min: 84, text: 'text-xs', num: 10 },
+    md: { step: 24, min: 112, text: 'text-sm', num: 12 },
+    lg: { step: 34, min: 156, text: 'text-base', num: 14 }
+  };
+  const frameSpec = FRAME_SPEC[barPrefs.frame] || FRAME_SPEC.sm;
+  const seqTileWidth = Math.max(frameSpec.min, seqMaxSteps * frameSpec.step + 28);
 
   // Build the score handed to the MuseScore / MIDI exporters (4 bars for looping modes, like the playback)
   const makeScore = (kind) => {
@@ -3441,6 +3485,66 @@ const ABELRhythmDominoes = () => {
                   Click on patterns below to add them to your sequence
                 </div>
               ) : (
+                <>
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mb-3 text-sm">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={barPrefs.on}
+                      onChange={(e) => setBarPrefs((b) => ({ ...b, on: e.target.checked }))}
+                      className="w-4 h-4 rounded"
+                    />
+                    Divider lines every
+                  </label>
+                  <div className={`flex items-center gap-2 ${barPrefs.on ? '' : 'opacity-50'}`}>
+                    <button
+                      onClick={() => setBarSize((n) => n - 1)}
+                      disabled={!barPrefs.on}
+                      className="w-7 h-7 rounded bg-gray-700 hover:bg-gray-600 font-bold"
+                      aria-label="Fewer frames per block"
+                    >
+                      −
+                    </button>
+                    <span className="w-6 text-center font-mono">{barPrefs.size}</span>
+                    <button
+                      onClick={() => setBarSize((n) => n + 1)}
+                      disabled={!barPrefs.on}
+                      className="w-7 h-7 rounded bg-gray-700 hover:bg-gray-600 font-bold"
+                      aria-label="More frames per block"
+                    >
+                      +
+                    </button>
+                    <span className="text-gray-400">frames</span>
+                  </div>
+                  <label className={`flex items-center gap-2 cursor-pointer ${barPrefs.on ? '' : 'opacity-50'}`}>
+                    <input
+                      type="checkbox"
+                      checked={barPrefs.numbers}
+                      disabled={!barPrefs.on}
+                      onChange={(e) => setBarPrefs((b) => ({ ...b, numbers: e.target.checked }))}
+                      className="w-4 h-4 rounded"
+                    />
+                    Numbers
+                  </label>
+                  <div className="flex items-center gap-2" role="radiogroup" aria-label="Frame size">
+                    <span className="text-gray-400">Frame size</span>
+                    {[['sm', 'S', 'Small'], ['md', 'M', 'Medium'], ['lg', 'L', 'Large']].map(([k, label, name]) => (
+                      <button
+                        key={k}
+                        role="radio"
+                        aria-checked={barPrefs.frame === k}
+                        aria-label={name}
+                        title={name}
+                        onClick={() => setBarPrefs((b) => ({ ...b, frame: k }))}
+                        className={`w-8 h-8 rounded font-bold transition-colors ${
+                          barPrefs.frame === k ? 'bg-purple-600 text-white' : 'bg-gray-700 hover:bg-gray-600'
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
                 <div className="flex flex-wrap gap-2">
                   {sequence.map((pattern, index) => (
                     <div
@@ -3485,17 +3589,29 @@ const ABELRhythmDominoes = () => {
                       >
                         ×
                       </button>
-                      <div className="text-xs font-bold mb-1" style={{ color: labelColorFor(pattern.color) }}>
+                      {barPrefs.on && index % barPrefs.size === 0 && (
+                        <div className="abel-barline" aria-hidden="true" />
+                      )}
+                      <div className={`${frameSpec.text} font-bold mb-1`} style={{ color: labelColorFor(pattern.color) }}>
+                        {barPrefs.on && barPrefs.numbers && index % barPrefs.size === 0 && (
+                          <span
+                            className="abel-barnum"
+                            style={{ fontSize: frameSpec.num, lineHeight: `${frameSpec.num + 6}px` }}
+                            title={`Block ${index / barPrefs.size + 1}`}
+                          >
+                            {index / barPrefs.size + 1}
+                          </span>
+                        )}
                         {pattern.letter}
                       </div>
                       <PatternView
                         viewId={`seq:${index}`}
                         pattern={pattern}
                         registry={registryRef}
-                        size="sm"
+                        size={barPrefs.frame}
                       />
                       <div
-                        className="text-xs text-gray-400 mt-1 font-mono"
+                        className={`${frameSpec.text} text-gray-400 mt-1 font-mono`}
                         style={{ visibility: pattern.binary.length > 4 ? 'visible' : 'hidden' }}
                       >
                         {pattern.binary.length} sub.
@@ -3503,6 +3619,7 @@ const ABELRhythmDominoes = () => {
                     </div>
                   ))}
                 </div>
+                </>
               )}
 
               {/* Save & share */}
