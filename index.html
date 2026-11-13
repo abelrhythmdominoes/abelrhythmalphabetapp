@@ -511,6 +511,36 @@ const CSS = `
 @media (prefers-reduced-motion:reduce){.abel-shuffle-spin{animation:none}}
 `;
 
+const MODE_OPTIONS = [
+  { k: 'single', label: 'Single' },
+  { k: 'sequence', label: 'Sequence' },
+  { k: 'fusion', label: 'Fusion' },
+  { k: 'layers', label: 'Layer' }
+];
+const MODE_INFO = {
+  single: {
+    about: 'Tap a pattern to hear it in a loop; tap it again to stop. Press and hold a pattern, then tap another one, to merge them.',
+    grid: 'Tap a pattern to hear it.'
+  },
+  sequence: {
+    about: 'Build a sequence: tap patterns to add them in order, then press Play Sequence. Press and hold a frame to move it.',
+    grid: 'Tap a pattern to add it to your sequence.'
+  },
+  fusion: {
+    about: 'Combine several patterns into one longer pattern. Then play it, or add it to a sequence or to the layers.',
+    grid: 'Tap patterns to combine them into one.'
+  },
+  layers: {
+    about: 'Play up to 4 patterns at the same time, each with its own instrument. Tap a slot, then tap a pattern.',
+    grid: 'Tap a pattern to place it in the selected slot.'
+  }
+};
+const VIEW_OPTIONS = [
+  { k: 'dots', label: 'Dots' },
+  { k: 'notation', label: 'Notation' },
+  { k: 'pie', label: 'Clock' }
+];
+
 const DIMS = {
   sm: { dot: 8, dash: 10, dashH: 2, h: 18 },
   md: { dot: 11, dash: 14, dashH: 2, h: 24 },
@@ -2206,13 +2236,15 @@ const ABELRhythmDominoes = () => {
     startPlayback('solo', pattern);
   };
 
-  const toggleSequenceMode = () => {
+  // One mode at a time. Switching never deletes anything: the sequence, the fusion and the layers are kept.
+  const mode = isLayerMode ? 'layers' : isFusionMode ? 'fusion' : isSequenceMode ? 'sequence' : 'single';
+  const setMode = (m) => {
+    if (m === mode) return;
     if (isPlaying) stopPlayback();
-    if (isSequenceMode) {
-      offerUndo(sequence, 'Sequence mode closed');
-      setSequence([]);
-    } else setIsLayerMode(false);
-    setIsSequenceMode(!isSequenceMode);
+    setMergeFirst(null);
+    setIsSequenceMode(m === 'sequence');
+    setIsFusionMode(m === 'fusion');
+    setIsLayerMode(m === 'layers');
   };
 
   const playSequence = () => {
@@ -2333,8 +2365,7 @@ const ABELRhythmDominoes = () => {
   };
   const applyUndo = () => {
     if (!undoInfo) return;
-    setIsLayerMode(false);
-    setIsSequenceMode(true);
+    setMode('sequence');
     setSequence(undoInfo.seq);
     setUndoInfo(null);
   };
@@ -2547,9 +2578,7 @@ const ABELRhythmDominoes = () => {
     const seq = decodeSequence(snap.s);
     if (seq.length === 0) return false;
     stopPlayback();
-    setIsLayerMode(false);
-    setIsFusionMode(false);
-    setIsSequenceMode(true);
+    setMode('sequence');
     setSequence(seq);
     const t = Number(snap.t);
     if (t >= 1 && t <= 300) changeTempo(t);
@@ -2938,17 +2967,6 @@ const ABELRhythmDominoes = () => {
     return dragState.after ? 'after' : 'before';
   };
 
-  const toggleFusionMode = () => {
-    if (isPlaying) stopPlayback();
-    if (isFusionMode) {
-      setFusionPatterns([]);
-      setFusedPattern(null);
-    } else {
-      setIsLayerMode(false);
-    }
-    setIsFusionMode(!isFusionMode);
-  };
-
   const addToFusion = (pattern) => {
     const next = [...fusionPatterns, pattern];
     setFusionPatterns(next);
@@ -2972,9 +2990,15 @@ const ABELRhythmDominoes = () => {
     startPlayback('fused', null);
   };
 
+  const [actionToast, setActionToast] = useState(null);
+  const actionToastTimer = useRef(null);
   const addFusedToSequence = () => {
     if (!fusedPattern) return;
-    setSequence([...sequence, fusedPattern]);
+    const next = [...sequence, fusedPattern];
+    setSequence(next);
+    setActionToast({ msg: `Added to your sequence (${next.length} frame${next.length > 1 ? 's' : ''})`, label: 'View sequence' });
+    if (actionToastTimer.current) clearTimeout(actionToastTimer.current);
+    actionToastTimer.current = setTimeout(() => setActionToast(null), 6000);
   };
 
   const removeFromFusion = (index) => {
@@ -2986,16 +3010,6 @@ const ABELRhythmDominoes = () => {
     } else {
       setFusedPattern(buildFused(next));
     }
-  };
-
-  const toggleLayerMode = () => {
-    if (isPlaying) stopPlayback();
-    if (!isLayerMode) {
-      // Layer Mode replaces the other builders (their content is kept)
-      setIsSequenceMode(false);
-      setIsFusionMode(false);
-    }
-    setIsLayerMode(!isLayerMode);
   };
 
   const hasLayers = layers.some((l) => l.pattern);
@@ -3197,6 +3211,30 @@ const ABELRhythmDominoes = () => {
           </div>
         </div>
       )}
+      {actionToast && !fs && (
+        <div
+          style={{
+            position: 'fixed',
+            left: 12,
+            right: 12,
+            bottom: 'calc(16px + env(safe-area-inset-bottom, 0px))',
+            zIndex: 90,
+            display: 'flex',
+            justifyContent: 'center',
+            pointerEvents: 'none'
+          }}
+        >
+          <div className="flex items-center gap-3 rounded-lg bg-gray-800 border border-gray-600 px-4 py-2 shadow-lg" style={{ pointerEvents: 'auto' }} role="status">
+            <span className="text-sm">{actionToast.msg}</span>
+            <button
+              onClick={() => { setActionToast(null); setMode('sequence'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
+              className="px-4 h-10 rounded-lg bg-purple-600 hover:bg-purple-700 text-sm font-bold"
+            >
+              {actionToast.label}
+            </button>
+          </div>
+        </div>
+      )}
       {appToast && !fs && (
         <div
           style={{
@@ -3336,6 +3374,103 @@ const ABELRhythmDominoes = () => {
             </div>
           )}
 
+          {/* Mode & view */}
+          <div className="bg-gray-800 rounded-lg p-4 mb-4 space-y-4">
+            <div>
+              <div id="mode-label" className="text-sm font-bold mb-2">What do you want to do?</div>
+              <div role="radiogroup" aria-labelledby="mode-label" className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {MODE_OPTIONS.map((m) => {
+                  const count = m.k === 'sequence' ? sequence.length : m.k === 'fusion' ? fusionPatterns.length : m.k === 'layers' ? layers.filter((l) => l.pattern).length : 0;
+                  const active = mode === m.k;
+                  return (
+                    <button
+                      key={m.k}
+                      role="radio"
+                      aria-checked={active}
+                      aria-label={count > 0 && !active ? `${m.label}, ${count} saved here` : m.label}
+                      onClick={() => setMode(m.k)}
+                      className={`h-12 rounded-lg font-bold flex items-center justify-center gap-2 transition-colors ${
+                        active ? 'bg-purple-600 text-white' : 'bg-gray-700 hover:bg-gray-600'
+                      }`}
+                    >
+                      {m.label}
+                      {count > 0 && (
+                        <span className="min-w-[1.25rem] h-5 px-1.5 rounded-full bg-black/25 text-xs flex items-center justify-center">
+                          {count}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="text-sm text-gray-300 mt-2" aria-live="polite">
+                {MODE_INFO[mode].about}
+              </div>
+            </div>
+            <div className="border-t border-gray-700 pt-3">
+              <div id="view-label" className="text-sm font-bold mb-2">Show patterns as</div>
+              <div role="radiogroup" aria-labelledby="view-label" className="grid grid-cols-3 gap-2">
+                {VIEW_OPTIONS.map((v) => (
+                  <button
+                    key={v.k}
+                    role="radio"
+                    aria-checked={displayMode === v.k}
+                    onClick={() => setDisplayMode(v.k)}
+                    className={`h-11 rounded-lg font-bold transition-colors ${
+                      displayMode === v.k ? 'bg-purple-600 text-white' : 'bg-gray-700 hover:bg-gray-600'
+                    }`}
+                  >
+                    {v.label}
+                  </button>
+                ))}
+              </div>
+              <div className="mt-2 space-y-2">
+                {notationMode && (
+                <div className="ml-6 space-y-2">
+                  <div className="flex items-center gap-2 text-sm flex-wrap">
+                    <span className="text-gray-400">Dashes shown as:</span>
+                    <div className="flex rounded overflow-hidden border border-gray-600">
+                      <button
+                        onClick={() => setNotationGhost(false)}
+                        className={`px-3 py-1 ${!notationGhost ? 'bg-blue-600' : 'bg-gray-700 hover:bg-gray-600'}`}
+                      >
+                        Rests
+                      </button>
+                      <button
+                        onClick={() => setNotationGhost(true)}
+                        className={`px-3 py-1 ${notationGhost ? 'bg-blue-600' : 'bg-gray-700 hover:bg-gray-600'}`}
+                      >
+                        Ghost notes
+                      </button>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 text-sm flex-wrap">
+                    <span className="text-gray-400">One beat =</span>
+                    <div className="flex rounded overflow-hidden border border-gray-600">
+                      {NOTE_UNITS.map((u) => (
+                        <button
+                          key={u.k}
+                          onClick={() => setNoteUnit(u.k)}
+                          className={`px-3 py-1 ${noteUnit === u.k ? 'bg-blue-600' : 'bg-gray-700 hover:bg-gray-600'}`}
+                        >
+                          {u.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="text-xs text-gray-500">
+                    One pattern = one beat = one {noteName(noteUnit)}. A = one {noteName(noteUnit)}, B = two {noteName(noteUnit + 1)}s, E = {noteName(noteUnit + 1)} triplet, L = four {noteName(noteUnit + 2)}s. Any other number of subdivisions gets a bracket with its number (5, 6, 7...).
+                  </div>
+                </div>
+              )}
+                {pieMode && (
+                <div className="ml-6 text-xs text-gray-500">
+                  Each pattern is a circle: one beat = one full turn, clockwise from 12 o'clock. A filled slice is a note, an empty slice is a rest. A white hand sweeps around the circle as the beat plays.
+                </div>
+              )}
+              </div>
+            </div>
+          </div>
           {/* Tempo / Sound Controls */}
           <div ref={tempoPanelRef} className="bg-gray-800 rounded-lg p-4 space-y-3">
             <div className="space-y-2">
@@ -3565,109 +3700,6 @@ const ABELRhythmDominoes = () => {
                   )}
                 </span>
               </div>
-              <div className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  id="sequencemode"
-                  checked={isSequenceMode}
-                  onChange={toggleSequenceMode}
-                  className="w-4 h-4 rounded"
-                />
-                <label htmlFor="sequencemode" className="text-sm cursor-pointer font-bold">
-                  Sequence Mode
-                </label>
-              </div>
-              <div className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  id="fusionmode"
-                  checked={isFusionMode}
-                  onChange={toggleFusionMode}
-                  className="w-4 h-4 rounded"
-                />
-                <label htmlFor="fusionmode" className="text-sm cursor-pointer font-bold">
-                  Fusion Mode
-                </label>
-              </div>
-              <div className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  id="layermode"
-                  checked={isLayerMode}
-                  onChange={toggleLayerMode}
-                  className="w-4 h-4 rounded"
-                />
-                <label htmlFor="layermode" className="text-sm cursor-pointer font-bold">
-                  Layer Mode
-                </label>
-              </div>
-              <div className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  id="notationmode"
-                  checked={notationMode}
-                  onChange={(e) => setNotationMode(e.target.checked)}
-                  className="w-4 h-4 rounded"
-                />
-                <label htmlFor="notationmode" className="text-sm cursor-pointer font-bold">
-                  Music Notation View
-                </label>
-              </div>
-              {notationMode && (
-                <div className="ml-6 space-y-2">
-                  <div className="flex items-center gap-2 text-sm flex-wrap">
-                    <span className="text-gray-400">Dashes shown as:</span>
-                    <div className="flex rounded overflow-hidden border border-gray-600">
-                      <button
-                        onClick={() => setNotationGhost(false)}
-                        className={`px-3 py-1 ${!notationGhost ? 'bg-blue-600' : 'bg-gray-700 hover:bg-gray-600'}`}
-                      >
-                        Rests
-                      </button>
-                      <button
-                        onClick={() => setNotationGhost(true)}
-                        className={`px-3 py-1 ${notationGhost ? 'bg-blue-600' : 'bg-gray-700 hover:bg-gray-600'}`}
-                      >
-                        Ghost notes
-                      </button>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2 text-sm flex-wrap">
-                    <span className="text-gray-400">One beat =</span>
-                    <div className="flex rounded overflow-hidden border border-gray-600">
-                      {NOTE_UNITS.map((u) => (
-                        <button
-                          key={u.k}
-                          onClick={() => setNoteUnit(u.k)}
-                          className={`px-3 py-1 ${noteUnit === u.k ? 'bg-blue-600' : 'bg-gray-700 hover:bg-gray-600'}`}
-                        >
-                          {u.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="text-xs text-gray-500">
-                    One pattern = one beat = one {noteName(noteUnit)}. A = one {noteName(noteUnit)}, B = two {noteName(noteUnit + 1)}s, E = {noteName(noteUnit + 1)} triplet, L = four {noteName(noteUnit + 2)}s. Any other number of subdivisions gets a bracket with its number (5, 6, 7...).
-                  </div>
-                </div>
-              )}
-              <div className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  id="piemode"
-                  checked={pieMode}
-                  onChange={(e) => setPieMode(e.target.checked)}
-                  className="w-4 h-4 rounded"
-                />
-                <label htmlFor="piemode" className="text-sm cursor-pointer font-bold">
-                  Clock View
-                </label>
-              </div>
-              {pieMode && (
-                <div className="ml-6 text-xs text-gray-500">
-                  Each pattern is a circle: one beat = one full turn, clockwise from 12 o'clock. A filled slice is a note, an empty slice is a rest. A white hand sweeps around the circle as the beat plays.
-                </div>
-              )}
               
             </div>
           </div>
@@ -3880,7 +3912,7 @@ const ABELRhythmDominoes = () => {
 
               {sequence.length === 0 ? (
                 <div className="text-center py-8 text-gray-400">
-                  Click on patterns below to add them to your sequence
+                  Tap a pattern below to add it. Then press Play Sequence.
                 </div>
               ) : (
                 <div className={fs ? 'abel-fs bg-gray-900' : ''} role={fs ? 'dialog' : undefined} aria-label={fs ? 'Full-screen sequence' : undefined}>
@@ -4176,7 +4208,7 @@ const ABELRhythmDominoes = () => {
                   <div className="text-sm text-gray-400 mb-2">Selected Patterns:</div>
                   {fusionPatterns.length === 0 ? (
                     <div className="text-center py-4 text-gray-500 bg-gray-800/50 rounded">
-                      Click on patterns below to add them to fusion
+                      Tap the patterns below to combine them.
                     </div>
                   ) : (
                     <div className="flex flex-wrap gap-2 bg-gray-800/50 p-3 rounded">
@@ -4293,6 +4325,7 @@ const ABELRhythmDominoes = () => {
         </div>
 
         {/* Code Groups */}
+        <div className="text-sm text-gray-300 mb-3 px-1" aria-live="polite">{MODE_INFO[mode].grid}</div>
         <div className="space-y-8">
           {CODE_GROUPS.map((group, groupIdx) => (
             <div key={groupIdx} className="bg-gray-800 rounded-lg p-6">
