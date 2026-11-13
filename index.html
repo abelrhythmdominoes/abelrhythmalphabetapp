@@ -2201,6 +2201,7 @@ const ABELRhythmDominoes = () => {
     if (isLayerMode) {
       assignToLayer(merged); // selected layer slot
     } else if (isSequenceMode) {
+      holdScrollAnchor();
       setSequence((prev) => [...prev, merged]); // end of the sequence
     } else {
       setSelectedPattern(merged); // plays in a loop like a single pattern
@@ -2226,6 +2227,7 @@ const ABELRhythmDominoes = () => {
       return;
     }
     if (isSequenceMode) {
+      holdScrollAnchor();
       setSequence((prev) => [...prev, pattern]);
       return;
     }
@@ -2452,6 +2454,25 @@ const ABELRhythmDominoes = () => {
   const fsPoppedRef = useRef(false);
   fsActiveRef.current = fs;
   const fsBeatsRef = useRef(null);
+
+  // Keep the pattern grid where the finger is when the sequence above it grows or shrinks.
+  // Chrome / Firefox / Android do this themselves (CSS scroll anchoring); Safari on iPhone and Mac does not,
+  // so the page appeared to jump each time the sequence gained a row.
+  const patternsRef = useRef(null);
+  const scrollAnchorRef = useRef(null);
+  const holdScrollAnchor = () => {
+    const el = patternsRef.current;
+    scrollAnchorRef.current = el ? el.getBoundingClientRect().top : null;
+  };
+  React.useLayoutEffect(() => {
+    const before = scrollAnchorRef.current;
+    scrollAnchorRef.current = null;
+    if (before == null || fsActiveRef.current) return;
+    const el = patternsRef.current;
+    if (!el) return;
+    const delta = el.getBoundingClientRect().top - before; // 0 where the browser already compensated
+    if (Math.abs(delta) > 0.5) window.scrollBy(0, delta);
+  }, [sequence]);
   const [fsOptions, setFsOptions] = useState(false); // extra full-screen settings (clicks per beat, frame size, auto-scroll)
   // the beat lights of the page and of the full-screen bar are driven together
   useEffect(() => {
@@ -2672,6 +2693,7 @@ const ABELRhythmDominoes = () => {
 
   const removeFromSequence = (index) => {
     const next = sequence.filter((_, i) => i !== index);
+    holdScrollAnchor();
     setSequence(next);
     if (next.length === 0 && playKind === 'sequence') stopPlayback();
   };
@@ -3008,6 +3030,7 @@ const ABELRhythmDominoes = () => {
   const addFusedToSequence = () => {
     if (!fusedPattern) return;
     const next = [...sequence, fusedPattern];
+    holdScrollAnchor();
     setSequence(next);
     setActionToast({ msg: `Added to your sequence (${next.length} frame${next.length > 1 ? 's' : ''})`, label: 'View sequence' });
     if (actionToastTimer.current) clearTimeout(actionToastTimer.current);
@@ -4437,7 +4460,7 @@ const ABELRhythmDominoes = () => {
 
         {/* Code Groups */}
         <div className="text-sm text-gray-300 mb-3 px-1" aria-live="polite">{MODE_INFO[mode].grid}</div>
-        <div className="space-y-8">
+        <div ref={patternsRef} className="space-y-8">
           {CODE_GROUPS.map((group, groupIdx) => (
             <div key={groupIdx} className="bg-gray-800 rounded-lg p-6">
               <div className="mb-4">
