@@ -1784,22 +1784,22 @@ const ABELRhythmDominoes = () => {
     }
     if (b.segId === seg.id) return;
     b.segId = seg.id;
-    els.forEach((e, i) => {
-      if (i === seg.beatPos) e.setAttribute('data-state', i === 0 ? 'down' : 'on');
+    els.forEach((e) => {
+      const bi = Number(e.getAttribute('data-bi'));
+      if (bi === seg.beatPos) e.setAttribute('data-state', bi === 0 ? 'down' : 'on');
       else e.removeAttribute('data-state');
       e.setAttribute('data-muted', seg.metro ? '0' : '1');
-    });
-    const el = els[seg.beatPos];
-    if (el && el.animate) {
-      try {
-        el.animate(
-          [{ transform: 'scale(2.2)' }, { transform: seg.beatPos === 0 ? 'scale(1.4)' : 'scale(1.25)' }],
-          { duration: 200, easing: 'ease-out' }
-        );
-      } catch (e) {
-        /* ignore */
+      if (bi === seg.beatPos && e.animate) {
+        try {
+          e.animate(
+            [{ transform: 'scale(2.2)' }, { transform: bi === 0 ? 'scale(1.4)' : 'scale(1.25)' }],
+            { duration: 200, easing: 'ease-out' }
+          );
+        } catch (err) {
+          /* ignore */
+        }
       }
-    }
+    });
   };
 
   const applyFrame = (frame) => {
@@ -2449,6 +2449,16 @@ const ABELRhythmDominoes = () => {
   const lastFollowRef = useRef({ top: -1, at: 0 });
   const fsPoppedRef = useRef(false);
   fsActiveRef.current = fs;
+  const fsBeatsRef = useRef(null);
+  // the beat lights of the page and of the full-screen bar are driven together
+  useEffect(() => {
+    const out = [];
+    [beatsContainerRef.current, fsBeatsRef.current].forEach((c) => {
+      if (c) out.push(...Array.from(c.querySelectorAll('[data-beat]')));
+    });
+    beatElsRef.current = out;
+    beatLitRef.current.segId = null;
+  }, [fs, beatsPerBar]);
   followRef.current = followPlayback;
 
   // Called by the animator whenever a new sequence frame lights up
@@ -3579,7 +3589,7 @@ const ABELRhythmDominoes = () => {
               </div>
               <div ref={beatsContainerRef} className="flex flex-wrap gap-2 items-center">
                 {Array.from({ length: beatsPerBar }).map((_, i) => (
-                  <div key={i} data-beat className="abel-beat" />
+                  <div key={i} data-beat data-bi={i} className="abel-beat" />
                 ))}
               </div>
             </div>
@@ -3962,6 +3972,73 @@ const ABELRhythmDominoes = () => {
                       <XIcon size={18} />
                       Exit
                     </button>
+                    <div className="w-full flex flex-wrap items-center gap-x-3 gap-y-2">
+                      <button
+                        role="switch"
+                        aria-checked={metronomeEnabled}
+                        onClick={() => setMetronomeEnabled(!metronomeEnabled)}
+                        className={`h-11 px-4 rounded-lg font-bold transition-colors ${
+                          metronomeEnabled ? 'bg-purple-600 text-white' : 'bg-gray-700 hover:bg-gray-600'
+                        }`}
+                      >
+                        Metronome: {metronomeEnabled ? 'On' : 'Off'}
+                      </button>
+                      <div
+                        className={`flex items-center gap-1 ${metronomeEnabled ? '' : 'opacity-50'}`}
+                        role="radiogroup"
+                        aria-label="Metronome clicks per beat"
+                      >
+                        <span className="text-sm text-gray-400 mr-1">Clicks per beat</span>
+                        {[1, 2, 3, 4].map((n) => (
+                          <button
+                            key={n}
+                            role="radio"
+                            aria-checked={clicksPerBeat === n}
+                            disabled={!metronomeEnabled}
+                            onClick={() => setClicksPerBeat(n)}
+                            className={`w-10 h-10 rounded font-bold ${
+                              clicksPerBeat === n ? 'bg-purple-600 text-white' : 'bg-gray-700 hover:bg-gray-600'
+                            }`}
+                          >
+                            {n}
+                          </button>
+                        ))}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onPointerDown={() => startTempoHold(-1)}
+                          onPointerUp={stopTempoHold}
+                          onPointerLeave={stopTempoHold}
+                          onPointerCancel={stopTempoHold}
+                          onContextMenu={(e) => e.preventDefault()}
+                          className="w-11 h-11 rounded bg-gray-700 hover:bg-gray-600 font-bold text-lg select-none"
+                          style={{ touchAction: 'manipulation' }}
+                          aria-label="Decrease tempo"
+                        >
+                          −
+                        </button>
+                        <div className="min-w-[4.5rem] text-center font-mono text-lg" aria-label="Tempo">
+                          {tempo} <span className="text-xs text-gray-400">BPM</span>
+                        </div>
+                        <button
+                          onPointerDown={() => startTempoHold(1)}
+                          onPointerUp={stopTempoHold}
+                          onPointerLeave={stopTempoHold}
+                          onPointerCancel={stopTempoHold}
+                          onContextMenu={(e) => e.preventDefault()}
+                          className="w-11 h-11 rounded bg-gray-700 hover:bg-gray-600 font-bold text-lg select-none"
+                          style={{ touchAction: 'manipulation' }}
+                          aria-label="Increase tempo"
+                        >
+                          +
+                        </button>
+                      </div>
+                      <div ref={fsBeatsRef} className="flex flex-wrap gap-2 items-center" aria-hidden="true">
+                        {Array.from({ length: beatsPerBar }).map((_, i) => (
+                          <div key={i} data-beat data-bi={i} className="abel-beat" />
+                        ))}
+                      </div>
+                    </div>
                   </div>
                 )}
                 <div className={fs ? 'hidden' : ''}>
