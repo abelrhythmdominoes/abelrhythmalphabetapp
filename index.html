@@ -1257,6 +1257,7 @@ const DominoCard = ({
   return (
     <button
       data-tile
+      data-pattern-letter={pattern.letter}
       onClick={handleClick}
       onPointerDown={handleDown}
       onPointerMove={handleMove}
@@ -2454,6 +2455,60 @@ const ABELRhythmDominoes = () => {
   const fsPoppedRef = useRef(false);
   fsActiveRef.current = fs;
   const fsBeatsRef = useRef(null);
+
+  // ---------- Keyboard shortcut: press a letter (A-Z) to choose that pattern ----------
+  // Same effect as tapping the pattern in the current mode. The apostrophe key arms the "rest" variants:
+  // ' then A, B, E or L gives A', B', E', L'.
+  const handlePatternClickRef = useRef(null);
+  handlePatternClickRef.current = handlePatternClick;
+  const [primeArmed, setPrimeArmed] = useState(false);
+  const hasKeyboard = typeof window !== 'undefined' && !!(window.matchMedia && window.matchMedia('(any-pointer: fine)').matches);
+  useEffect(() => {
+    let primeUntil = 0;
+    let primeTimer = null;
+    const disarm = () => {
+      primeUntil = 0;
+      if (primeTimer) clearTimeout(primeTimer);
+      primeTimer = null;
+      setPrimeArmed(false);
+    };
+    const onKey = (e) => {
+      if (e.defaultPrevented || e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
+      const t = e.target;
+      if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+      const k = e.key;
+      if (k === "'" || k === '\u2019') {
+        e.preventDefault();
+        primeUntil = Date.now() + 2500;
+        setPrimeArmed(true);
+        if (primeTimer) clearTimeout(primeTimer);
+        primeTimer = setTimeout(disarm, 2500);
+        return;
+      }
+      if (!/^[a-zA-Z]$/.test(k)) return;
+      const prime = Date.now() < primeUntil;
+      disarm();
+      const letter = k.toUpperCase() + (prime ? "'" : '');
+      const p = PATTERN_BY_LETTER[letter];
+      if (!p) return;
+      e.preventDefault();
+      if (handlePatternClickRef.current) handlePatternClickRef.current(p);
+      // brief pulse on the matching card, so the person sees which pattern was chosen
+      try {
+        const card = document.querySelector(`[data-pattern-letter="${letter}"]`);
+        if (card && card.animate) {
+          card.animate([{ transform: 'scale(1)' }, { transform: 'scale(1.1)' }, { transform: 'scale(1)' }], { duration: 240, easing: 'ease-out' });
+        }
+      } catch (err) {
+        /* cosmetic only */
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      if (primeTimer) clearTimeout(primeTimer);
+    };
+  }, []);
 
   // Keep the pattern grid where the finger is when the sequence above it grows or shrinks.
   // Chrome / Firefox / Android do this themselves (CSS scroll anchoring); Safari on iPhone and Mac does not,
@@ -4459,7 +4514,16 @@ const ABELRhythmDominoes = () => {
         </div>
 
         {/* Code Groups */}
-        <div className="text-sm text-gray-300 mb-3 px-1" aria-live="polite">{MODE_INFO[mode].grid}</div>
+        <div className="text-sm text-gray-300 mb-3 px-1" aria-live="polite">
+          {MODE_INFO[mode].grid}
+          {hasKeyboard && (
+            <span className="block text-xs text-gray-400 mt-1">
+              {primeArmed
+                ? "Now press A, B, E or L for the rest pattern (A', B', E', L')."
+                : "Keyboard: press a letter A to Z to choose that pattern. Press ' then A, B, E or L for the rest patterns."}
+            </span>
+          )}
+        </div>
         <div ref={patternsRef} className="space-y-8">
           {CODE_GROUPS.map((group, groupIdx) => (
             <div key={groupIdx} className="bg-gray-800 rounded-lg p-6">
