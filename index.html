@@ -94,6 +94,7 @@ const Pause = makeIcon('Pause');
 const Shuffle = makeIcon('Shuffle');
 const Maximize = makeIcon('Maximize');
 const XIcon = makeIcon('X');
+const Share2 = makeIcon('Share2');
 const Info = makeIcon('Info');
 const Volume2 = makeIcon('Volume2');
 const Download = makeIcon('Download');
@@ -1557,7 +1558,7 @@ const getHeardTime = (ctx) => {
    MAIN COMPONENT
    ===================================================================== */
 const ABELRhythmDominoes = () => {
-  const [showInfo, setShowInfo] = useState(true);
+  const [showInfo, setShowInfo] = useState(false);
   const [tempo, setTempo] = useState(120);
   const [metronomeEnabled, setMetronomeEnabled] = useState(true);
   const [clicksPerBeat, setClicksPerBeat] = useState(1); // metronome clicks per beat: 1-4
@@ -2336,6 +2337,33 @@ const ABELRhythmDominoes = () => {
     setIsSequenceMode(true);
     setSequence(undoInfo.seq);
     setUndoInfo(null);
+  };
+
+  // ---------- Share the app itself (link to this page) ----------
+  const [appToast, setAppToast] = useState('');
+  const appToastTimer = useRef(null);
+  const shareApp = async () => {
+    const url = window.location.href.split('#')[0];
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: 'ABEL Rhythm Alphabet', text: 'ABEL Rhythm Alphabet: learn and play rhythm patterns', url });
+        return;
+      }
+    } catch (e) {
+      if (e && e.name === 'AbortError') return; // the person closed the share sheet
+    }
+    let msg = 'App link copied';
+    try {
+      await navigator.clipboard.writeText(url);
+    } catch (e) {
+      window.prompt('Copy this link to share the app:', url);
+      msg = '';
+    }
+    if (msg) {
+      setAppToast(msg);
+      if (appToastTimer.current) clearTimeout(appToastTimer.current);
+      appToastTimer.current = setTimeout(() => setAppToast(''), 3000);
+    }
   };
 
   // ---------- Tap tempo ----------
@@ -3169,6 +3197,24 @@ const ABELRhythmDominoes = () => {
           </div>
         </div>
       )}
+      {appToast && !fs && (
+        <div
+          style={{
+            position: 'fixed',
+            left: 12,
+            right: 12,
+            bottom: 'calc(80px + env(safe-area-inset-bottom, 0px))',
+            zIndex: 90,
+            display: 'flex',
+            justifyContent: 'center',
+            pointerEvents: 'none'
+          }}
+        >
+          <div className="rounded-lg bg-gray-800 border border-gray-600 px-4 py-2 shadow-lg text-sm" role="status">
+            {appToast}
+          </div>
+        </div>
+      )}
       {undoInfo && !fs && (
         <div
           style={{
@@ -3206,7 +3252,7 @@ const ABELRhythmDominoes = () => {
         <div className="mb-8">
           <div className="flex items-center justify-between mb-4">
             <div>
-              <h1 className="text-4xl font-bold mb-2">
+              <h1 className="text-3xl sm:text-4xl font-bold mb-2">
                 <span className="text-green-400">A</span>
                 <span className="text-yellow-400">B</span>
                 <span className="text-white">E</span>
@@ -3231,7 +3277,15 @@ const ABELRhythmDominoes = () => {
                 </a>
               </p>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <button
+                onClick={shareApp}
+                className="p-2 rounded-lg bg-gray-800 hover:bg-gray-700 transition-colors"
+                aria-label="Share this app"
+                title="Share this app"
+              >
+                <Share2 size={24} />
+              </button>
               <button
                 onClick={toggleTheme}
                 className="p-2 rounded-lg bg-gray-800 hover:bg-gray-700 transition-colors text-xl leading-none"
@@ -3243,6 +3297,9 @@ const ABELRhythmDominoes = () => {
               <button
                 onClick={() => setShowInfo(!showInfo)}
                 className="p-2 rounded-lg bg-gray-800 hover:bg-gray-700 transition-colors"
+                aria-label={showInfo ? 'Hide help' : 'Show help'}
+                aria-expanded={showInfo}
+                title={showInfo ? 'Hide help' : 'How it works'}
               >
                 <Info size={24} />
               </button>
