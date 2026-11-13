@@ -92,6 +92,8 @@ const makeIcon = (name) => {
 const Play = makeIcon('Play');
 const Pause = makeIcon('Pause');
 const Shuffle = makeIcon('Shuffle');
+const Maximize = makeIcon('Maximize');
+const XIcon = makeIcon('X');
 const Info = makeIcon('Info');
 const Volume2 = makeIcon('Volume2');
 const Download = makeIcon('Download');
@@ -445,10 +447,12 @@ const CSS = `
 .abel-beat[data-state="on"]{background:#60a5fa;box-shadow:0 0 10px #60a5fa;transform:scale(1.25)}
 .abel-beat[data-state="down"]{background:#4ade80;box-shadow:0 0 12px #4ade80;transform:scale(1.4)}
 .abel-beat[data-muted="1"]{opacity:.5}
-.abel-barline{position:absolute;left:-6px;top:0;bottom:0;width:3px;border-radius:2px;background:rgba(216,180,254,.85);pointer-events:none}
-.abel-barnum{display:inline-block;margin-right:6px;padding:0 5px;border-radius:9999px;background:rgba(216,180,254,.28);color:#e9d5ff;font-size:10px;line-height:16px;font-weight:700}
-.abel-light .abel-barline{background:rgba(109,40,217,.7)}
-.abel-light .abel-barnum{background:rgba(109,40,217,.16);color:#5b21b6}
+.abel-fs{position:fixed;left:0;right:0;top:0;bottom:0;z-index:10000;display:flex;flex-direction:column;padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) env(safe-area-inset-bottom,0px) env(safe-area-inset-left,0px)}
+.abel-fs-scroll{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;padding:16px 18px 40vh}
+.abel-barnum{display:inline-block;margin-right:6px;padding:0 5px;border-radius:9999px;background:rgba(34,197,94,.25);color:#86efac;font-size:10px;line-height:16px;font-weight:700}
+.abel-tile.abel-greenframe{border-color:#22c55e;box-shadow:0 0 0 1px rgba(34,197,94,.55)}
+.abel-light .abel-tile.abel-greenframe{border-color:#16a34a;box-shadow:0 0 0 1px rgba(22,163,74,.5)}
+.abel-light .abel-barnum{background:rgba(22,163,74,.16);color:#15803d}
 @keyframes abel-shuffle-spin{0%{transform:rotate(0) scale(1)}50%{transform:rotate(180deg) scale(1.35)}100%{transform:rotate(360deg) scale(1)}}
 .abel-shuffle-spin{animation:abel-shuffle-spin .55s ease-in-out}
 @media (prefers-reduced-motion:reduce){.abel-shuffle-spin{animation:none}}
@@ -1737,6 +1741,7 @@ const ABELRhythmDominoes = () => {
             const state = track.sound[step] ? 'hit' : seg.ghost ? 'ghost' : 'rest';
             setStepState(entry, local, state, popMs);
             setTileActive(entry, true);
+            if (fsActiveRef.current && entry.tile && String(tg.viewId).startsWith('seq:')) followTile(entry.tile);
             lit.set(tg.viewId, { entry, idx: local, segId: seg.id });
           }
           if (entry.bar && tg.count === track.n) {
@@ -2232,7 +2237,7 @@ const ABELRhythmDominoes = () => {
     }
   }, [shuffleTick]);
 
-  // ---------- Bar lines in the sequence (a separator every N frames) ----------
+  // ---------- Green frame on the first frame of every group of N frames ----------
   const [barPrefs, setBarPrefs] = useState(() => {
     const d = { on: false, size: 4, numbers: true, frame: 'sm' };
     try {
@@ -2259,6 +2264,120 @@ const ABELRhythmDominoes = () => {
   }, [barPrefs]);
   const setBarSize = (fn) =>
     setBarPrefs((b) => ({ ...b, size: Math.max(1, Math.min(16, typeof fn === 'function' ? fn(b.size) : fn)) }));
+
+  // ---------- Full-screen sequence view (auto-scrolls to follow playback) ----------
+  const [fs, setFs] = useState(false);
+  const [followPlayback, setFollowPlayback] = useState(true);
+  const fsScrollRef = useRef(null);
+  const fsActiveRef = useRef(false);
+  const followRef = useRef(true);
+  const userScrollUntilRef = useRef(0);
+  const lastFollowRef = useRef({ top: -1, at: 0 });
+  const fsPoppedRef = useRef(false);
+  fsActiveRef.current = fs;
+  followRef.current = followPlayback;
+
+  // Called by the animator whenever a new sequence frame lights up
+  const followTile = (tile) => {
+    if (!fsActiveRef.current || !followRef.current || !tile) return;
+    const sc = fsScrollRef.current;
+    if (!sc || Date.now() < userScrollUntilRef.current) return;
+    const cr = sc.getBoundingClientRect();
+    const tr = tile.getBoundingClientRect();
+    const margin = Math.min(110, cr.height * 0.18);
+    if (tr.top >= cr.top + margin && tr.bottom <= cr.bottom - margin) return; // still comfortably in view
+    const target = Math.max(0, Math.round(sc.scrollTop + (tr.top - cr.top) - cr.height * 0.3));
+    const now = Date.now();
+    const last = lastFollowRef.current;
+    if (Math.abs(target - last.top) < 4 && now - last.at < 700) return;
+    lastFollowRef.current = { top: target, at: now };
+    const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    try {
+      sc.scrollTo({ top: target, behavior: reduce ? 'auto' : 'smooth' });
+    } catch (e) {
+      sc.scrollTop = target;
+    }
+  };
+
+  const enterFullscreen = () => {
+    userScrollUntilRef.current = 0;
+    setFs(true);
+    try {
+      const el = document.documentElement;
+      if (el.requestFullscreen) el.requestFullscreen({ navigationUI: 'hide' }).catch(() => {});
+    } catch (e) {
+      /* the full-screen overlay still works without the browser's own full-screen mode */
+    }
+  };
+  const exitFullscreen = () => setFs(false);
+
+  useEffect(() => {
+    if (!fs) return undefined;
+    fsPoppedRef.current = false;
+    // The Android / browser Back button leaves full screen instead of leaving the app
+    try {
+      history.pushState({ abelFs: 1 }, '');
+    } catch (e) {
+      /* ignore */
+    }
+    const onPop = () => {
+      fsPoppedRef.current = true;
+      setFs(false);
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') setFs(false);
+    };
+    const onFsChange = () => {
+      if (!document.fullscreenElement) setFs(false); // the person left the browser's full-screen mode
+    };
+    window.addEventListener('popstate', onPop);
+    window.addEventListener('keydown', onKey);
+    document.addEventListener('fullscreenchange', onFsChange);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    // Keep the screen awake while presenting
+    let wake = null;
+    const getWake = async () => {
+      try {
+        if (navigator.wakeLock && document.visibilityState === 'visible') {
+          wake = await navigator.wakeLock.request('screen');
+        }
+      } catch (e) {
+        wake = null;
+      }
+    };
+    getWake();
+    document.addEventListener('visibilitychange', getWake);
+
+    return () => {
+      window.removeEventListener('popstate', onPop);
+      window.removeEventListener('keydown', onKey);
+      document.removeEventListener('fullscreenchange', onFsChange);
+      document.removeEventListener('visibilitychange', getWake);
+      document.body.style.overflow = prevOverflow;
+      try {
+        if (wake) wake.release();
+      } catch (e) {
+        /* ignore */
+      }
+      try {
+        if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {});
+      } catch (e) {
+        /* ignore */
+      }
+      try {
+        if (!fsPoppedRef.current && history.state && history.state.abelFs) history.back();
+      } catch (e) {
+        /* ignore */
+      }
+    };
+  }, [fs]);
+
+  // Leaving Sequence Mode (or emptying the sequence) also leaves full screen
+  useEffect(() => {
+    if (fs && (!isSequenceMode || sequence.length === 0)) setFs(false);
+  }, [fs, isSequenceMode, sequence.length]);
 
   // ---------- Save & share ----------
   const [savedList, setSavedList] = useState(() => readSaved());
@@ -2630,6 +2749,7 @@ const ABELRhythmDominoes = () => {
   }, []);
 
   const onTilePointerDown = (e, index) => {
+    if (fsActiveRef.current) return; // full-screen view is for following along, not editing
     if (e.target.closest && e.target.closest('button')) return; // leave the × button alone
     const isMouse = e.pointerType === 'mouse';
     if (isMouse && e.button !== 0) return;
@@ -3452,6 +3572,19 @@ const ABELRhythmDominoes = () => {
                   </button>
                   <ExportButtons getScore={() => makeScore('sequence')} disabled={sequence.length === 0} />
                   <button
+                    onClick={enterFullscreen}
+                    disabled={sequence.length === 0}
+                    title="Show the sequence full screen; it scrolls along while it plays"
+                    className={`flex items-center gap-2 px-4 py-2 rounded-lg whitespace-nowrap transition-colors ${
+                      sequence.length === 0
+                        ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
+                        : 'bg-teal-600 hover:bg-teal-700'
+                    }`}
+                  >
+                    <Maximize size={16} />
+                    Full screen
+                  </button>
+                  <button
                     onClick={shuffleSequence}
                     disabled={sequence.length < 2}
                     title="Randomly shuffle the order of the patterns"
@@ -3485,7 +3618,56 @@ const ABELRhythmDominoes = () => {
                   Click on patterns below to add them to your sequence
                 </div>
               ) : (
-                <>
+                <div className={fs ? 'abel-fs bg-gray-900' : ''} role={fs ? 'dialog' : undefined} aria-label={fs ? 'Full-screen sequence' : undefined}>
+                {fs && (
+                  <div className="flex flex-wrap items-center gap-2 px-3 py-2 border-b border-gray-700 bg-gray-800 flex-shrink-0">
+                    <button
+                      onClick={playSequence}
+                      className="flex items-center gap-2 px-4 h-11 rounded-lg bg-purple-600 hover:bg-purple-700 font-bold"
+                    >
+                      {playKind === 'sequence' ? <Pause size={18} /> : <Play size={18} />}
+                      {playKind === 'sequence' ? 'Stop' : 'Play'}
+                    </button>
+                    <label className="flex items-center gap-2 cursor-pointer text-sm px-2 h-11">
+                      <input
+                        type="checkbox"
+                        checked={followPlayback}
+                        onChange={(e) => {
+                          userScrollUntilRef.current = 0;
+                          setFollowPlayback(e.target.checked);
+                        }}
+                        className="w-4 h-4 rounded"
+                      />
+                      Auto-scroll
+                    </label>
+                    <div className="flex items-center gap-1" role="radiogroup" aria-label="Frame size">
+                      {[['sm', 'S', 'Small'], ['md', 'M', 'Medium'], ['lg', 'L', 'Large']].map(([k, label, name]) => (
+                        <button
+                          key={k}
+                          role="radio"
+                          aria-checked={barPrefs.frame === k}
+                          aria-label={name}
+                          title={name}
+                          onClick={() => setBarPrefs((b) => ({ ...b, frame: k }))}
+                          className={`w-10 h-10 rounded font-bold ${
+                            barPrefs.frame === k ? 'bg-purple-600 text-white' : 'bg-gray-700 hover:bg-gray-600'
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                    <button
+                      onClick={exitFullscreen}
+                      aria-label="Exit full screen"
+                      className="ml-auto flex items-center gap-2 px-4 h-11 rounded-lg bg-red-600 hover:bg-red-700 font-bold"
+                    >
+                      <XIcon size={18} />
+                      Exit
+                    </button>
+                  </div>
+                )}
+                <div className={fs ? 'hidden' : ''}>
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mb-3 text-sm">
                   <label className="flex items-center gap-2 cursor-pointer">
                     <input
@@ -3494,14 +3676,14 @@ const ABELRhythmDominoes = () => {
                       onChange={(e) => setBarPrefs((b) => ({ ...b, on: e.target.checked }))}
                       className="w-4 h-4 rounded"
                     />
-                    Divider lines every
+                    Green frame every
                   </label>
                   <div className={`flex items-center gap-2 ${barPrefs.on ? '' : 'opacity-50'}`}>
                     <button
                       onClick={() => setBarSize((n) => n - 1)}
                       disabled={!barPrefs.on}
                       className="w-7 h-7 rounded bg-gray-700 hover:bg-gray-600 font-bold"
-                      aria-label="Fewer frames per block"
+                      aria-label="Fewer frames per group"
                     >
                       −
                     </button>
@@ -3510,7 +3692,7 @@ const ABELRhythmDominoes = () => {
                       onClick={() => setBarSize((n) => n + 1)}
                       disabled={!barPrefs.on}
                       className="w-7 h-7 rounded bg-gray-700 hover:bg-gray-600 font-bold"
-                      aria-label="More frames per block"
+                      aria-label="More frames per group"
                     >
                       +
                     </button>
@@ -3545,6 +3727,14 @@ const ABELRhythmDominoes = () => {
                     ))}
                   </div>
                 </div>
+                </div>
+                <div
+                  ref={fsScrollRef}
+                  className={fs ? 'abel-fs-scroll' : ''}
+                  onWheel={() => { userScrollUntilRef.current = Date.now() + 4000; }}
+                  onTouchStart={() => { userScrollUntilRef.current = Date.now() + 4000; }}
+                  onPointerDown={() => { userScrollUntilRef.current = Date.now() + 4000; }}
+                >
                 <div className="flex flex-wrap gap-2">
                   {sequence.map((pattern, index) => (
                     <div
@@ -3553,7 +3743,9 @@ const ABELRhythmDominoes = () => {
                         seqTileRefs.current[index] = el;
                       }}
                       data-tile
-                      className="abel-tile relative group bg-gray-700 rounded-lg p-3 border-2 border-purple-400"
+                      className={`abel-tile relative group bg-gray-700 rounded-lg p-3 border-2 ${
+                        barPrefs.on && index % barPrefs.size === 0 ? 'abel-greenframe border-green-500' : 'border-purple-400'
+                      }`}
                       onPointerDown={(e) => onTilePointerDown(e, index)}
                       onContextMenu={(e) => e.preventDefault()}
                       style={{
@@ -3589,15 +3781,12 @@ const ABELRhythmDominoes = () => {
                       >
                         ×
                       </button>
-                      {barPrefs.on && index % barPrefs.size === 0 && (
-                        <div className="abel-barline" aria-hidden="true" />
-                      )}
                       <div className={`${frameSpec.text} font-bold mb-1`} style={{ color: labelColorFor(pattern.color) }}>
                         {barPrefs.on && barPrefs.numbers && index % barPrefs.size === 0 && (
                           <span
                             className="abel-barnum"
                             style={{ fontSize: frameSpec.num, lineHeight: `${frameSpec.num + 6}px` }}
-                            title={`Block ${index / barPrefs.size + 1}`}
+                            title={`Group ${index / barPrefs.size + 1}`}
                           >
                             {index / barPrefs.size + 1}
                           </span>
@@ -3619,7 +3808,8 @@ const ABELRhythmDominoes = () => {
                     </div>
                   ))}
                 </div>
-                </>
+                </div>
+                </div>
               )}
 
               {/* Save & share */}
