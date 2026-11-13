@@ -95,6 +95,7 @@ const Shuffle = makeIcon('Shuffle');
 const Maximize = makeIcon('Maximize');
 const XIcon = makeIcon('X');
 const Share2 = makeIcon('Share2');
+const SettingsIcon = makeIcon('Settings');
 const Info = makeIcon('Info');
 const Volume2 = makeIcon('Volume2');
 const Download = makeIcon('Download');
@@ -2450,6 +2451,7 @@ const ABELRhythmDominoes = () => {
   const fsPoppedRef = useRef(false);
   fsActiveRef.current = fs;
   const fsBeatsRef = useRef(null);
+  const [fsOptions, setFsOptions] = useState(false); // extra full-screen settings (clicks per beat, frame size, auto-scroll)
   // the beat lights of the page and of the full-screen bar are driven together
   useEffect(() => {
     const out = [];
@@ -3927,98 +3929,32 @@ const ABELRhythmDominoes = () => {
               ) : (
                 <div className={fs ? 'abel-fs bg-gray-900' : ''} role={fs ? 'dialog' : undefined} aria-label={fs ? 'Full-screen sequence' : undefined}>
                 {fs && (
-                  <div className="flex flex-wrap items-center gap-2 px-3 py-2 border-b border-gray-700 bg-gray-800 flex-shrink-0">
-                    <button
-                      onClick={playSequence}
-                      className="flex items-center gap-2 px-4 h-11 rounded-lg bg-green-600 hover:bg-green-700 font-bold"
-                    >
-                      {playKind === 'sequence' ? <Pause size={18} /> : <Play size={18} />}
-                      {playKind === 'sequence' ? 'Stop' : 'Play'}
-                    </button>
-                    <label className="flex items-center gap-2 cursor-pointer text-sm px-2 h-11">
-                      <input
-                        type="checkbox"
-                        checked={followPlayback}
-                        onChange={(e) => {
-                          userScrollUntilRef.current = 0;
-                          setFollowPlayback(e.target.checked);
-                        }}
-                        className="w-4 h-4 rounded"
-                      />
-                      Auto-scroll
-                    </label>
-                    <div className="flex items-center gap-1" role="radiogroup" aria-label="Frame size">
-                      {[['sm', 'S', 'Small'], ['md', 'M', 'Medium'], ['lg', 'L', 'Large']].map(([k, label, name]) => (
-                        <button
-                          key={k}
-                          role="radio"
-                          aria-checked={barPrefs.frame === k}
-                          aria-label={name}
-                          title={name}
-                          onClick={() => setBarPrefs((b) => ({ ...b, frame: k }))}
-                          className={`w-10 h-10 rounded font-bold ${
-                            barPrefs.frame === k ? 'bg-purple-600 text-white' : 'bg-gray-700 hover:bg-gray-600'
-                          }`}
-                        >
-                          {label}
-                        </button>
-                      ))}
-                    </div>
-                    <button
-                      onClick={exitFullscreen}
-                      aria-label="Exit full screen"
-                      className="ml-auto flex items-center gap-2 px-4 h-11 rounded-lg bg-red-600 hover:bg-red-700 font-bold"
-                    >
-                      <XIcon size={18} />
-                      Exit
-                    </button>
-                    <div className="w-full flex flex-wrap items-center gap-x-3 gap-y-2">
+                  <div className="px-3 py-2 border-b border-gray-700 bg-gray-800 flex-shrink-0 space-y-2">
+                    {/* Row 1: Play, tempo, exit */}
+                    <div className="flex items-center gap-2">
                       <button
-                        role="switch"
-                        aria-checked={metronomeEnabled}
-                        onClick={() => setMetronomeEnabled(!metronomeEnabled)}
-                        className={`h-11 px-4 rounded-lg font-bold transition-colors ${
-                          metronomeEnabled ? 'bg-purple-600 text-white' : 'bg-gray-700 hover:bg-gray-600'
-                        }`}
+                        onClick={playSequence}
+                        className="flex items-center gap-2 px-4 h-11 rounded-lg bg-green-600 hover:bg-green-700 font-bold"
                       >
-                        Metronome: {metronomeEnabled ? 'On' : 'Off'}
+                        {playKind === 'sequence' ? <Pause size={18} /> : <Play size={18} />}
+                        {playKind === 'sequence' ? 'Stop' : 'Play'}
                       </button>
-                      <div
-                        className={`flex items-center gap-1 ${metronomeEnabled ? '' : 'opacity-50'}`}
-                        role="radiogroup"
-                        aria-label="Metronome clicks per beat"
-                      >
-                        <span className="text-sm text-gray-400 mr-1">Clicks per beat</span>
-                        {[1, 2, 3, 4].map((n) => (
-                          <button
-                            key={n}
-                            role="radio"
-                            aria-checked={clicksPerBeat === n}
-                            disabled={!metronomeEnabled}
-                            onClick={() => setClicksPerBeat(n)}
-                            className={`w-10 h-10 rounded font-bold ${
-                              clicksPerBeat === n ? 'bg-purple-600 text-white' : 'bg-gray-700 hover:bg-gray-600'
-                            }`}
-                          >
-                            {n}
-                          </button>
-                        ))}
-                      </div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex-1 min-w-0 flex items-center justify-center gap-1">
                         <button
                           onPointerDown={() => startTempoHold(-1)}
                           onPointerUp={stopTempoHold}
                           onPointerLeave={stopTempoHold}
                           onPointerCancel={stopTempoHold}
                           onContextMenu={(e) => e.preventDefault()}
-                          className="w-11 h-11 rounded bg-gray-700 hover:bg-gray-600 font-bold text-lg select-none"
+                          className="w-11 h-11 rounded-lg bg-gray-700 hover:bg-gray-600 font-bold text-lg select-none"
                           style={{ touchAction: 'manipulation' }}
                           aria-label="Decrease tempo"
                         >
                           −
                         </button>
-                        <div className="min-w-[4.5rem] text-center font-mono text-lg" aria-label="Tempo">
-                          {tempo} <span className="text-xs text-gray-400">BPM</span>
+                        <div className="min-w-[3.75rem] text-center leading-tight" aria-label="Tempo">
+                          <div className="font-mono text-lg">{tempo}</div>
+                          <div className="text-[10px] text-gray-400 -mt-0.5">BPM</div>
                         </div>
                         <button
                           onPointerDown={() => startTempoHold(1)}
@@ -4026,19 +3962,113 @@ const ABELRhythmDominoes = () => {
                           onPointerLeave={stopTempoHold}
                           onPointerCancel={stopTempoHold}
                           onContextMenu={(e) => e.preventDefault()}
-                          className="w-11 h-11 rounded bg-gray-700 hover:bg-gray-600 font-bold text-lg select-none"
+                          className="w-11 h-11 rounded-lg bg-gray-700 hover:bg-gray-600 font-bold text-lg select-none"
                           style={{ touchAction: 'manipulation' }}
                           aria-label="Increase tempo"
                         >
                           +
                         </button>
                       </div>
-                      <div ref={fsBeatsRef} className="flex flex-wrap gap-2 items-center" aria-hidden="true">
+                      <button
+                        onClick={exitFullscreen}
+                        aria-label="Exit full screen"
+                        title="Exit full screen"
+                        className="flex items-center justify-center gap-2 min-w-[2.75rem] px-3 h-11 rounded-lg bg-red-600 hover:bg-red-700 font-bold"
+                      >
+                        <XIcon size={20} />
+                        <span className="hidden sm:inline">Exit</span>
+                      </button>
+                    </div>
+                    {/* Row 2: metronome, beat lights, options */}
+                    <div className="flex items-center gap-2">
+                      <button
+                        role="switch"
+                        aria-checked={metronomeEnabled}
+                        onClick={() => setMetronomeEnabled(!metronomeEnabled)}
+                        className={`h-11 px-3 rounded-lg font-bold whitespace-nowrap transition-colors ${
+                          metronomeEnabled ? 'bg-purple-600 text-white' : 'bg-gray-700 hover:bg-gray-600'
+                        }`}
+                      >
+                        Metronome {metronomeEnabled ? 'On' : 'Off'}
+                      </button>
+                      <div
+                        ref={fsBeatsRef}
+                        className="flex-1 min-w-0 flex flex-wrap gap-1.5 items-center justify-center"
+                        aria-hidden="true"
+                      >
                         {Array.from({ length: beatsPerBar }).map((_, i) => (
                           <div key={i} data-beat data-bi={i} className="abel-beat" />
                         ))}
                       </div>
+                      <button
+                        onClick={() => setFsOptions((o) => !o)}
+                        aria-expanded={fsOptions}
+                        aria-label="More options"
+                        title="More options"
+                        className={`flex items-center justify-center gap-2 px-3 h-11 rounded-lg font-bold transition-colors ${
+                          fsOptions ? 'bg-purple-600 text-white' : 'bg-gray-700 hover:bg-gray-600'
+                        }`}
+                      >
+                        <SettingsIcon size={20} />
+                        <span className="hidden sm:inline">Options</span>
+                      </button>
                     </div>
+                    {/* Options (collapsed by default) */}
+                    {fsOptions && (
+                      <div className="border-t border-gray-700 pt-2 space-y-2">
+                        <div className={`flex items-center justify-between gap-3 ${metronomeEnabled ? '' : 'opacity-50'}`}>
+                          <span className="text-sm">Clicks per beat</span>
+                          <div className="flex items-center gap-1" role="radiogroup" aria-label="Metronome clicks per beat">
+                            {[1, 2, 3, 4].map((n) => (
+                              <button
+                                key={n}
+                                role="radio"
+                                aria-checked={clicksPerBeat === n}
+                                disabled={!metronomeEnabled}
+                                onClick={() => setClicksPerBeat(n)}
+                                className={`w-10 h-10 rounded-lg font-bold ${
+                                  clicksPerBeat === n ? 'bg-purple-600 text-white' : 'bg-gray-700 hover:bg-gray-600'
+                                }`}
+                              >
+                                {n}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="text-sm">Frame size</span>
+                          <div className="flex items-center gap-1" role="radiogroup" aria-label="Frame size">
+                            {[['sm', 'S', 'Small'], ['md', 'M', 'Medium'], ['lg', 'L', 'Large']].map(([k, label, name]) => (
+                              <button
+                                key={k}
+                                role="radio"
+                                aria-checked={barPrefs.frame === k}
+                                aria-label={name}
+                                title={name}
+                                onClick={() => setBarPrefs((b) => ({ ...b, frame: k }))}
+                                className={`w-10 h-10 rounded-lg font-bold ${
+                                  barPrefs.frame === k ? 'bg-purple-600 text-white' : 'bg-gray-700 hover:bg-gray-600'
+                                }`}
+                              >
+                                {label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                        <label className="flex items-center justify-between gap-3 cursor-pointer h-10">
+                          <span className="text-sm">Auto-scroll while playing</span>
+                          <input
+                            type="checkbox"
+                            checked={followPlayback}
+                            onChange={(e) => {
+                              userScrollUntilRef.current = 0;
+                              setFollowPlayback(e.target.checked);
+                            }}
+                            className="w-5 h-5 rounded"
+                          />
+                        </label>
+                      </div>
+                    )}
                   </div>
                 )}
                 <div className={fs ? 'hidden' : ''}>
