@@ -1570,6 +1570,64 @@ const playClick = (ctx, time, isDownbeat, dest, isSub = false) => {
   osc.stop(time + dur);
 };
 
+/* Scheduler clock. The 25 ms tick runs in a Web Worker, so a busy page (re-rendering, animations) or a
+   throttled timer cannot delay it. If workers are unavailable or blocked, it falls back to setInterval. */
+const makeTicker = (cb, ms) => {
+  let stopped = false;
+  let fallbackId = null;
+  let worker = null;
+  let url = null;
+  let gotTick = false;
+  let watchdog = null;
+  const startFallback = () => {
+    if (!stopped && fallbackId == null) fallbackId = setInterval(cb, ms);
+  };
+  try {
+    url = URL.createObjectURL(
+      new Blob(
+        [`let id=null;onmessage=function(e){if(e.data==='start'){clearInterval(id);id=setInterval(function(){postMessage(0)},${ms});}else if(e.data==='stop'){clearInterval(id);id=null;}};`],
+        { type: 'text/javascript' }
+      )
+    );
+    worker = new Worker(url);
+    worker.onmessage = () => {
+      gotTick = true;
+      if (!stopped) cb();
+    };
+    worker.onerror = () => {
+      try {
+        worker.terminate();
+      } catch (e) {
+        /* ignore */
+      }
+      startFallback();
+    };
+    worker.postMessage('start');
+    // if the worker is silently blocked, take over with a normal timer
+    watchdog = setTimeout(() => {
+      if (!gotTick) startFallback();
+    }, 400);
+  } catch (e) {
+    startFallback();
+  }
+  return {
+    stop() {
+      stopped = true;
+      if (watchdog) clearTimeout(watchdog);
+      if (fallbackId != null) clearInterval(fallbackId);
+      try {
+        if (worker) {
+          worker.postMessage('stop');
+          worker.terminate();
+        }
+        if (url) URL.revokeObjectURL(url);
+      } catch (e) {
+        /* ignore */
+      }
+    }
+  };
+};
+
 /* Time of the audio that is actually being HEARD right now
    (compensates the browser's reported output latency). */
 const getHeardTime = (ctx) => {
@@ -1598,6 +1656,7 @@ const ABELRhythmDominoes = () => {
   const [ghostNotesEnabled, setGhostNotesEnabled] = useState(true);
   const [syncOffset, setSyncOffset] = useState(0);
   const [showSync, setShowSync] = useState(false);
+  const [audioBlocked, setAudioBlocked] = useState(false); // audio stopped by the system (call, lock screen...) while playing
   const [hapticsEnabled, setHapticsEnabled] = useState(true); // on by default (a saved choice overrides it)
 
   // ---------- Haptics (Web Vibration API, with graceful fallback) ----------
@@ -1733,8 +1792,29 @@ const ABELRhythmDominoes = () => {
   const beatLitRef = useRef({ segId: null });
 
   useEffect(() => {
+    // iPhone / iPad: without this, the ring-silent switch mutes Web Audio (the animation would run without sound)
+    try {
+      if (navigator.audioSession) navigator.audioSession.type = 'playback';
+    } catch (e) {
+      /* not supported: ignore */
+    }
     ctxRef.current = new (window.AudioContext || window.webkitAudioContext)();
     const createdCtx = ctxRef.current;
+    const onState = () => checkAudio();
+    createdCtx.addEventListener('statechange', onState);
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return;
+      const c = ctxRef.current;
+      if (c && playRef.current && c.state !== 'running') {
+        try {
+          c.resume().then(checkAudio).catch(checkAudio);
+        } catch (e) {
+          checkAudio();
+        }
+      }
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('pageshow', onVisible);
     renderSamples(createdCtx)
       .then((s) => {
         if (ctxRef.current === createdCtx) samplesRef.current = s;
@@ -1744,7 +1824,10 @@ const ABELRhythmDominoes = () => {
       ? Array.from(beatsContainerRef.current.querySelectorAll('[data-beat]'))
       : [];
     return () => {
-      if (schedulerIdRef.current) clearInterval(schedulerIdRef.current);
+      createdCtx.removeEventListener('statechange', onState);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('pageshow', onVisible);
+      if (schedulerIdRef.current) schedulerIdRef.current.stop();
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
       if (ctxRef.current) {
         ctxRef.current.close().catch(() => {});
@@ -1984,7 +2067,7 @@ const ABELRhythmDominoes = () => {
 
   const stopEngine = () => {
     if (schedulerIdRef.current) {
-      clearInterval(schedulerIdRef.current);
+      schedulerIdRef.current.stop();
       schedulerIdRef.current = null;
     }
     if (rafRef.current) {
@@ -1993,6 +2076,7 @@ const ABELRhythmDominoes = () => {
     }
     playRef.current = null;
     segmentsRef.current = [];
+    setAudioBlocked(false);
 
     const ctx = ctxRef.current;
     const m = masterRef.current;
@@ -2022,7 +2106,13 @@ const ABELRhythmDominoes = () => {
   const startPlayback = (mode, pattern) => {
     const ctx = ctxRef.current;
     if (!ctx) return;
-    if (ctx.state === 'suspended') ctx.resume();
+    if (ctx.state !== 'running') {
+      try {
+        ctx.resume().catch(() => {}); // also covers the 'interrupted' state some browsers report
+      } catch (e) {
+        /* ignore */
+      }
+    }
 
     stopEngine();
 
@@ -2038,8 +2128,39 @@ const ABELRhythmDominoes = () => {
     nextBeatRef.current = ctx.currentTime + 0.08;
 
     scheduler();
-    schedulerIdRef.current = setInterval(scheduler, 25);
+    schedulerIdRef.current = makeTicker(scheduler, 25);
     rafRef.current = requestAnimationFrame(animate);
+    setTimeout(checkAudio, 900);
+  };
+
+  // If the audio does not run while something is playing (phone call, lock screen, browser policy),
+  // offer a one-tap way to resume. A short delay avoids a flash while the browser is still starting up.
+  const audioBlockTimer = useRef(null);
+  function checkAudio() {
+    const ctx = ctxRef.current;
+    const bad = !!(ctx && playRef.current && ctx.state !== 'running');
+    if (!bad) {
+      if (audioBlockTimer.current) clearTimeout(audioBlockTimer.current);
+      audioBlockTimer.current = null;
+      setAudioBlocked(false);
+      return;
+    }
+    if (!audioBlockTimer.current) {
+      audioBlockTimer.current = setTimeout(() => {
+        audioBlockTimer.current = null;
+        const c = ctxRef.current;
+        if (c && playRef.current && c.state !== 'running') setAudioBlocked(true);
+      }, 700);
+    }
+  }
+  const resumeAudio = () => {
+    const ctx = ctxRef.current;
+    if (!ctx) return;
+    try {
+      ctx.resume().then(checkAudio).catch(checkAudio);
+    } catch (e) {
+      checkAudio();
+    }
   };
 
   const stopPlayback = () => {
@@ -3300,6 +3421,26 @@ const ABELRhythmDominoes = () => {
           }}
         >
           {sequence[dragState.from].letter}
+        </div>
+      )}
+      {audioBlocked && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 'calc(12px + env(safe-area-inset-top, 0px))',
+            left: 12,
+            right: 12,
+            display: 'flex',
+            justifyContent: 'center',
+            zIndex: 10001
+          }}
+        >
+          <div className="flex items-center gap-3 rounded-lg bg-gray-800 border border-gray-600 px-4 py-2 shadow-lg" role="alert">
+            <span className="text-sm">Audio is paused</span>
+            <button onClick={resumeAudio} className="px-4 h-11 rounded-lg bg-green-600 hover:bg-green-700 text-sm font-bold">
+              Tap to resume
+            </button>
+          </div>
         </div>
       )}
       {showTransport && !fs && (
