@@ -2456,6 +2456,59 @@ const ABELRhythmDominoes = () => {
   fsActiveRef.current = fs;
   const fsBeatsRef = useRef(null);
 
+  // ---------- Swipe left / right on the patterns to change the view (ABEL, Notation, Clock) ----------
+  const hasTouch = typeof window !== 'undefined' && !!(window.matchMedia && window.matchMedia('(any-pointer: coarse)').matches);
+  const swipeRef = useRef(null);
+  const [viewToast, setViewToast] = useState(null);
+  const viewToastTimer = useRef(null);
+  const cycleView = (dir) => {
+    const idx = VIEW_OPTIONS.findIndex((v) => v.k === displayMode);
+    const next = idx + dir;
+    const el = patternsRef.current;
+    const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (next < 0 || next >= VIEW_OPTIONS.length) {
+      // already at the first / last view: a small bounce says "that's the end"
+      if (el && el.animate && !reduce) {
+        try {
+          el.animate([{ transform: 'translateX(0)' }, { transform: `translateX(${-dir * 14}px)` }, { transform: 'translateX(0)' }], { duration: 260, easing: 'ease-out' });
+        } catch (e) {
+          /* cosmetic */
+        }
+      }
+      return;
+    }
+    setDisplayMode(VIEW_OPTIONS[next].k);
+    setViewToast(VIEW_OPTIONS[next].k);
+    if (viewToastTimer.current) clearTimeout(viewToastTimer.current);
+    viewToastTimer.current = setTimeout(() => setViewToast(null), 1300);
+    if (el && el.animate && !reduce) {
+      try {
+        el.animate([{ transform: `translateX(${dir * 48}px)`, opacity: 0.2 }, { transform: 'translateX(0)', opacity: 1 }], { duration: 260, easing: 'cubic-bezier(.2,.8,.2,1)' });
+      } catch (e) {
+        /* cosmetic */
+      }
+    }
+  };
+  const onSwipeStart = (e) => {
+    swipeRef.current = null;
+    if (fsActiveRef.current || !e.touches || e.touches.length !== 1) return;
+    const t = e.touches[0];
+    // leave the screen edges alone: they belong to the system's own Back / swipe gestures
+    if (t.clientX < 24 || t.clientX > window.innerWidth - 24) return;
+    swipeRef.current = { x: t.clientX, y: t.clientY, at: Date.now() };
+  };
+  const onSwipeEnd = (e) => {
+    const st = swipeRef.current;
+    swipeRef.current = null;
+    if (!st || !e.changedTouches || !e.changedTouches[0]) return;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - st.x;
+    const dy = t.clientY - st.y;
+    if (Date.now() - st.at > 700) return; // a slow drag or a long-press is not a swipe
+    if (Math.abs(dx) < 70 || Math.abs(dx) < Math.abs(dy) * 1.8) return; // too short, or mostly vertical (scrolling)
+    cycleView(dx < 0 ? 1 : -1); // swipe left = next view, swipe right = previous
+  };
+
   // ---------- Keyboard shortcut: press a letter (A-Z) to choose that pattern ----------
   // Same effect as tapping the pattern in the current mode. The apostrophe key arms the "rest" variants:
   // ' then A, B, E or L gives A', B', E', L'.
@@ -3299,6 +3352,29 @@ const ABELRhythmDominoes = () => {
             >
               +
             </button>
+          </div>
+        </div>
+      )}
+      {viewToast && !fs && (
+        <div
+          style={{
+            position: 'fixed',
+            top: showTransport ? 'calc(72px + env(safe-area-inset-top, 0px))' : 'calc(12px + env(safe-area-inset-top, 0px))',
+            left: 0,
+            right: 0,
+            display: 'flex',
+            justifyContent: 'center',
+            zIndex: 60,
+            pointerEvents: 'none'
+          }}
+        >
+          <div className="flex items-center gap-3 rounded-full bg-gray-800 border border-gray-600 px-4 py-2 shadow-lg text-sm font-bold" role="status">
+            <span className="flex items-center gap-1" aria-hidden="true">
+              {VIEW_OPTIONS.map((v) => (
+                <span key={v.k} className={`w-2 h-2 rounded-full ${v.k === viewToast ? 'bg-purple-500' : 'bg-gray-500'}`} />
+              ))}
+            </span>
+            {(VIEW_OPTIONS.find((v) => v.k === viewToast) || {}).label}
           </div>
         </div>
       )}
@@ -4516,6 +4592,11 @@ const ABELRhythmDominoes = () => {
         {/* Code Groups */}
         <div className="text-sm text-gray-300 mb-3 px-1" aria-live="polite">
           {MODE_INFO[mode].grid}
+          {hasTouch && (
+            <span className="block text-xs text-gray-400 mt-1">
+              Swipe left or right on the patterns to change the view (ABEL, Notation, Clock).
+            </span>
+          )}
           {hasKeyboard && (
             <span className="block text-xs text-gray-400 mt-1">
               {primeArmed
@@ -4524,7 +4605,14 @@ const ABELRhythmDominoes = () => {
             </span>
           )}
         </div>
-        <div ref={patternsRef} className="space-y-8">
+        <div
+          ref={patternsRef}
+          className="space-y-8"
+          onTouchStart={onSwipeStart}
+          onTouchEnd={onSwipeEnd}
+          onTouchCancel={() => { swipeRef.current = null; }}
+          style={{ touchAction: 'pan-y pinch-zoom' }}
+        >
           {CODE_GROUPS.map((group, groupIdx) => (
             <div key={groupIdx} className="bg-gray-800 rounded-lg p-6">
               <div className="mb-4">
