@@ -224,6 +224,27 @@ const EXPORT_INST = {
   bass:    { name: 'Bass', pitched: true, step: 'E', oct: 2, midi: 40, program: 34 }
 };
 const NOTE_TYPES = ['whole', 'half', 'quarter', 'eighth', '16th', '32nd', '64th', '128th', '256th', '512th', '1024th'];
+// Beat unit code: 0 whole, 1 half, 2 quarter, 3 eighth, 2.5 = dotted quarter (compound beat = 3 eighths)
+const DOTTED_Q = 2.5;
+const unitQ = (u) => (u === DOTTED_Q ? 1.5 : 4 / Math.pow(2, u)); // quarter notes per beat
+// How a pattern of n steps is written inside one beat of unit `u`:
+//  k = written note value (1/2^k), dot = dotted note (only A in the dotted-quarter beat),
+//  normal = how many of those notes fill the beat without a tuplet, tuplet = needs a bracket + number.
+// Simple beats: the largest value that fits n notes at or below n (3 -> triplet, 5..7 -> tuplets of the next value).
+// Dotted-quarter beat: 1 = dotted quarter, then the smallest value that has at least n notes per beat
+// (eighths 3, sixteenths 6, thirty-seconds 12...): 2 -> eighth duplet, 4 -> sixteenth quadruplet, 3 / 6 / 12 natural.
+const stepSpec = (u, n) => {
+  if (u === DOTTED_Q) {
+    if (n === 1) return { k: 2, dot: true, normal: 1, tuplet: false };
+    let k = 3;
+    let normal = 3;
+    while (normal < n) { k++; normal *= 2; }
+    return { k, dot: false, normal, tuplet: n !== normal };
+  }
+  const lg = Math.floor(Math.log2(n));
+  const m = Math.pow(2, lg);
+  return { k: u + lg, dot: false, normal: m, tuplet: n !== m };
+};
 const gcdN = (a, b) => (b ? gcdN(b, a % b) : a);
 const lcmN = (a, b) => (a / gcdN(a, b)) * b;
 const xmlEsc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -231,7 +252,8 @@ const stepsOf = (p) => p.code.split(' ');
 
 // score = { title, tempo, beatsPerBar, unit, ghost, parts: [{ instrument, beats: [pattern | null] }] }
 const toMusicXML = (sc) => {
-  const Q = 4 / Math.pow(2, sc.unit);                 // quarter notes per beat
+  const dottedBeat = sc.unit === DOTTED_Q;
+  const Q = unitQ(sc.unit);                           // quarter notes per beat
   const counts = [1];
   sc.parts.forEach((p) => p.beats.forEach((b) => { if (b) counts.push(stepsOf(b).length); }));
   const D = 2 * counts.reduce(lcmN, 1);               // divisions per quarter note
@@ -266,6 +288,7 @@ const toMusicXML = (sc) => {
       s += `<duration>${o.dur}</duration>`;
       if (pitchedOrDrum) s += `<instrument id="${id}-I1"/>`;
       s += `<voice>1</voice><type>${o.type}</type>`;
+      if (o.dot) s += '<dot/>';
       if (o.tm) s += `<time-modification><actual-notes>${o.tm[0]}</actual-notes><normal-notes>${o.tm[1]}</normal-notes></time-modification>`;
       if (pitchedOrDrum) {
         const head = inst.pitched ? 'normal' : inst.head;
@@ -277,12 +300,11 @@ const toMusicXML = (sc) => {
     };
 
     const beatXml = (pat) => {
-      if (!pat) return note({ sound: false, ghost: false, dur: beatDiv, type: NOTE_TYPES[sc.unit] });
+      if (!pat) return note({ sound: false, ghost: false, dur: beatDiv, type: dottedBeat ? 'quarter' : NOTE_TYPES[sc.unit], dot: dottedBeat });
       const sy = stepsOf(pat);
       const n = sy.length;
-      const lg = Math.floor(Math.log2(n));
-      const m = Math.pow(2, lg);
-      const type = NOTE_TYPES[Math.min(sc.unit + lg, NOTE_TYPES.length - 1)];
+      const spec = stepSpec(sc.unit, n);
+      const type = NOTE_TYPES[Math.min(spec.k, NOTE_TYPES.length - 1)];
       const dur = beatDiv / n;
       let s = `<direction placement="above"><direction-type><words>${xmlEsc(pat.letter)}</words></direction-type></direction>`;
       sy.forEach((c, i) => {
@@ -292,8 +314,9 @@ const toMusicXML = (sc) => {
           ghost: !hit && sc.ghost,
           dur,
           type,
-          tm: n !== m ? [n, m] : null,
-          tuplet: n !== m ? (i === 0 ? 'start' : i === n - 1 ? 'stop' : null) : null
+          dot: spec.dot,
+          tm: spec.tuplet ? [n, spec.normal] : null,
+          tuplet: spec.tuplet ? (i === 0 ? 'start' : i === n - 1 ? 'stop' : null) : null
         });
       });
       return s;
@@ -305,11 +328,11 @@ const toMusicXML = (sc) => {
       x += `<measure number="${mi + 1}">`;
       if (mi === 0) {
         x += `<attributes><divisions>${D}</divisions><key><fifths>0</fifths></key>` +
-          `<time><beats>${bpb}</beats><beat-type>${Math.pow(2, sc.unit)}</beat-type></time>` +
+          `<time><beats>${dottedBeat ? bpb * 3 : bpb}</beats><beat-type>${dottedBeat ? 8 : Math.pow(2, sc.unit)}</beat-type></time>` +
           (inst.pitched ? '<clef><sign>F</sign><line>4</line></clef>' : '<clef><sign>percussion</sign><line>2</line></clef>') +
           '</attributes>';
         if (pi === 0) {
-          x += `<direction placement="above"><direction-type><metronome><beat-unit>${NOTE_TYPES[sc.unit]}</beat-unit>` +
+          x += `<direction placement="above"><direction-type><metronome><beat-unit>${dottedBeat ? 'quarter' : NOTE_TYPES[sc.unit]}</beat-unit>${dottedBeat ? '<beat-unit-dot/>' : ''}` +
             `<per-minute>${sc.tempo}</per-minute></metronome></direction-type><sound tempo="${sc.tempo * Q}"/></direction>`;
         }
       }
@@ -330,7 +353,7 @@ const toMusicXML = (sc) => {
 
 const toMidi = (sc) => {
   const TPQ = 960;
-  const Q = 4 / Math.pow(2, sc.unit);
+  const Q = unitQ(sc.unit);
   const beatTicks = Q * TPQ;
   const enc = new TextEncoder();
   const vlq = (v) => { const o = [v & 127]; while ((v >>= 7)) o.unshift((v & 127) | 128); return o; };
@@ -351,7 +374,7 @@ const toMidi = (sc) => {
   const head = [
     { tick: 0, order: 0, bytes: meta(0x03, [...enc.encode(sc.title)]) },
     { tick: 0, order: 1, bytes: meta(0x51, [(mpqn >> 16) & 255, (mpqn >> 8) & 255, mpqn & 255]) },
-    { tick: 0, order: 2, bytes: meta(0x58, [sc.beatsPerBar, sc.unit, 24, 8]) }
+    { tick: 0, order: 2, bytes: meta(0x58, sc.unit === DOTTED_Q ? [sc.beatsPerBar * 3, 3, 24, 8] : [sc.beatsPerBar, sc.unit, 24, 8]) }
   ];
   const tracks = [track(head)];
 
@@ -657,16 +680,17 @@ const setTileActive = (entry, on) => {
 /* ---------- Notation mode: patterns drawn as music notation (1 beat = a note value chosen by the user, quarter by default) ---------- */
 // Module-level switch, set by the main component on every render
 // unit = the note value that one beat (= one pattern) stands for, as the exponent k of 1/2^k:
-// 0 = whole note, 1 = half note, 2 = quarter note (default), 3 = eighth note
+// 0 = whole note, 1 = half note, 2 = quarter note (default), 2.5 = dotted quarter note, 3 = eighth note
 const NOTATION = { on: false, ghost: false, unit: 2 };
 const NOTE_UNITS = [
   { k: 0, label: 'Whole' },
   { k: 1, label: 'Half' },
   { k: 2, label: 'Quarter' },
+  { k: DOTTED_Q, label: 'Dotted quarter' },
   { k: 3, label: 'Eighth' }
 ];
 const NOTE_NAMES = ['whole', 'half', 'quarter', 'eighth', 'sixteenth', 'thirty-second', 'sixty-fourth', 'hundred-twenty-eighth'];
-const noteName = (k) => (NOTE_NAMES[k] || `1/${2 ** k}`) + ' note';
+const noteName = (k) => k === DOTTED_Q ? 'dotted quarter note' : (NOTE_NAMES[k] || `1/${2 ** k}`) + ' note';
 
 // Pop animations for notation glyphs (uniform scale only, so rests are never stretched)
 const POP_N = {
@@ -777,7 +801,8 @@ const Notehead = ({ x, y, rx, ry, k }) => {
   );
 };
 
-// One beat = one note value `unit` (exponent k0: 0 whole, 1 half, 2 quarter, 3 eighth). n steps per beat:
+// One beat = one note value `unit` (exponent k0: 0 whole, 1 half, 2 quarter, 2.5 dotted quarter, 3 eighth). See stepSpec().
+// Simple beats, n steps per beat:
 // each step is written as 1/2^(k0 + floor(log2 n)); with a quarter-note beat that gives
 // n=1 quarter, n=2 eighths, n=3 eighth triplet, n=4 sixteenths, n=5/6/7 sixteenth tuplets, n=8 thirty-seconds...
 // (flags/beams = k - 2; any n that is not a power of 2 gets a tuplet bracket)
@@ -836,17 +861,20 @@ function NotationView({ viewId, pattern, registry, size = 'md', bar = true, ghos
   const stemTop = 16 * S;
   const rx = 4.4 * S;
   const ry = 3.3 * S;
-  const k = unit + Math.floor(Math.log2(n)); // written note value is 1/2^k
+  const spec = stepSpec(unit, n);
+  const k = spec.k; // written note value is 1/2^k
+  const dotted = spec.dot; // dotted quarter (n = 1 in the dotted-quarter beat)
   const nf = Math.max(0, k - 2); // number of flags / beams
   const hasStem = k >= 1;
   const hrx = k === 0 ? rx * 1.3 : rx; // half-width of the notehead
   const gap = nf > 1 ? Math.min(5 * S, (15 * S) / (nf - 1)) : 5 * S; // distance between beams
   const bh = Math.min(3.2 * S, gap - 0.6 * S); // beam thickness
-  const isTuplet = (n & (n - 1)) !== 0;
+  const isTuplet = spec.tuplet;
   const sound = symbols.map((sy) => sy === '•');
   const isNote = sound.map((s) => s || ghostNotes); // dashes are ghost notes or rests
   const cx = (i) => (i + 0.5) * slot;
   const stemX = (i) => cx(i) + rx - 0.7 * S;
+  const Dot = ({ x, y }) => <circle cx={x} cy={y} r={1.5 * S} className="abel-n-fill" />;
 
   // consecutive notes are beamed together; a lone note gets flags; rests break the beam
   const runs = [];
@@ -951,6 +979,7 @@ function NotationView({ viewId, pattern, registry, size = 'md', bar = true, ghos
             return (
               <g key={`g-${i}`} data-step data-n="1" className="abel-n-step">
                 <Notehead x={x} y={noteY} rx={rx} ry={ry} k={k} />
+                {dotted && <Dot x={x + hrx + 3.6 * S} y={noteY - 2.2 * S} />}
               </g>
             );
           }
@@ -970,12 +999,14 @@ function NotationView({ viewId, pattern, registry, size = 'md', bar = true, ghos
                   className="abel-n-stroke"
                   strokeWidth={1.2 * S}
                 />
+                {dotted && <Dot x={pr + 3.4 * S} y={noteY - 2.2 * S} />}
               </g>
             );
           }
           return (
             <g key={`g-${i}`} data-step data-n="1" className="abel-n-step">
               <NotationRest cx={x} cy={noteY} s={S} k={k} />
+              {dotted && <Dot x={x + 6.5 * S} y={noteY - 3.5 * S} />}
             </g>
           );
         })}
@@ -2133,8 +2164,8 @@ const ABELRhythmDominoes = () => {
       try {
         if (window.storage) {
           const r = await window.storage.get('abel:noteUnit');
-          const v = r ? parseInt(r.value, 10) : NaN;
-          if (!cancelled && v >= 0 && v <= 3) setNoteUnitState(v);
+          const v = r ? parseFloat(r.value) : NaN;
+          if (!cancelled && [0, 1, 2, DOTTED_Q, 3].includes(v)) setNoteUnitState(v);
         }
       } catch (e) {
         /* nothing saved: keep the default */
@@ -3642,7 +3673,7 @@ const ABELRhythmDominoes = () => {
                         <button
                           key={u.k}
                           onClick={() => setNoteUnit(u.k)}
-                          className={`px-3 py-1 ${noteUnit === u.k ? 'bg-blue-600' : 'bg-gray-700 hover:bg-gray-600'}`}
+                          className={`px-3 py-1 whitespace-nowrap ${noteUnit === u.k ? 'bg-blue-600' : 'bg-gray-700 hover:bg-gray-600'}`}
                         >
                           {u.label}
                         </button>
@@ -3650,7 +3681,9 @@ const ABELRhythmDominoes = () => {
                     </div>
                   </div>
                   <div className="text-xs text-gray-500">
-                    One pattern = one beat = one {noteName(noteUnit)}. A = one {noteName(noteUnit)}, B = two {noteName(noteUnit + 1)}s, E = {noteName(noteUnit + 1)} triplet, L = four {noteName(noteUnit + 2)}s. Any other number of subdivisions gets a bracket with its number (5, 6, 7...).
+                    {noteUnit === DOTTED_Q
+                      ? 'One pattern = one beat = one dotted quarter note. A = one dotted quarter note, B = two eighth notes (bracket 2), E = three eighth notes, L = four sixteenth notes (bracket 4). Six steps are six sixteenth notes; other numbers of subdivisions get a bracket with their number.'
+                      : <>One pattern = one beat = one {noteName(noteUnit)}. A = one {noteName(noteUnit)}, B = two {noteName(noteUnit + 1)}s, E = {noteName(noteUnit + 1)} triplet, L = four {noteName(noteUnit + 2)}s. Any other number of subdivisions gets a bracket with its number (5, 6, 7...).</>}
                   </div>
                 </div>
               )}
