@@ -518,6 +518,7 @@ const CSS = `
 .abel-bar{height:2px;background:rgba(255,255,255,.08);border-radius:2px;overflow:hidden;margin-top:6px}
 .abel-bar>div{height:100%;width:100%;background:var(--c);transform-origin:left center;transform:scaleX(0)}
 .abel-beat{width:12px;height:12px;border-radius:9999px;background:#374151;transition:transform .12s ease-out,box-shadow .15s ease-out,background-color .12s ease-out}
+.abel-countin{display:inline-block;min-width:2rem;text-align:center;padding:.25rem .6rem;border-radius:.5rem;background:#7c3aed;color:#fff;font-weight:800;font-variant-numeric:tabular-nums}.abel-countin:empty{display:none}
 .abel-beat[data-state="on"]{background:#60a5fa;box-shadow:0 0 10px #60a5fa;transform:scale(1.25)}
 .abel-beat[data-state="down"]{background:#4ade80;box-shadow:0 0 12px #4ade80;transform:scale(1.4)}
 .abel-beat[data-muted="1"]{opacity:.5}
@@ -1625,6 +1626,7 @@ const ABELRhythmDominoes = () => {
   const [showInfo, setShowInfo] = useState(false);
   const [tempo, setTempo] = useState(120);
   const [metronomeEnabled, setMetronomeEnabled] = useState(true);
+  const [countInEnabled, setCountInEnabledState] = useState(false); // one bar of clicks before a Sequence starts
   const [clicksPerBeat, setClicksPerBeat] = useState(1); // metronome clicks per beat: 1-4
   const [ghostNotesEnabled, setGhostNotesEnabled] = useState(true);
   const [syncOffset, setSyncOffset] = useState(0);
@@ -1730,6 +1732,8 @@ const ABELRhythmDominoes = () => {
   const schedulerIdRef = useRef(null);
   const scheduledTempoRef = useRef(null); // tempo the already-queued beat was scheduled with
   const tempoRestartRef = useRef(null); // debounce timer for re-queuing a slow beat
+  const countInLeftRef = useRef(0); // count-in beats still to be scheduled before the Sequence starts
+  const lastWasCountInRef = useRef(false); // was the most recently scheduled beat a count-in beat?
   const rafRef = useRef(null);
   const nextBeatRef = useRef(0);
   const beatCountRef = useRef(0);
@@ -1748,6 +1752,7 @@ const ABELRhythmDominoes = () => {
   settingsRef.current = {
     tempo,
     metronome: metronomeEnabled,
+    countIn: countInEnabled,
     clicks: clicksPerBeat,
     ghost: ghostNotesEnabled,
     instrument: selectedInstrument,
@@ -1794,7 +1799,14 @@ const ABELRhythmDominoes = () => {
   }, [beatsPerBar]);
 
   /* ---------------- Animator (driven by the audio clock) ---------------- */
+  const setCountBadge = (text) => {
+    document.querySelectorAll('[data-countin-badge]').forEach((el) => {
+      if (el.textContent !== text) el.textContent = text;
+    });
+  };
+
   const clearLit = () => {
+    setCountBadge('');
     for (const [, prev] of litRef.current) {
       setStepState(prev.entry, prev.idx, 'idle');
       setTileActive(prev.entry, false);
@@ -1820,6 +1832,7 @@ const ABELRhythmDominoes = () => {
     }
     if (b.segId === seg.id) return;
     b.segId = seg.id;
+    setCountBadge(seg.countIn ? String(seg.beatPos + 1) : '');
     els.forEach((e) => {
       const bi = Number(e.getAttribute('data-bi'));
       if (bi === seg.beatPos) e.setAttribute('data-state', bi === 0 ? 'down' : 'on');
@@ -1909,6 +1922,30 @@ const ABELRhythmDominoes = () => {
     if (!play || !dest) return false;
 
     const beat = 60 / s.tempo;
+
+    // 0) Count-in (Sequence only): one bar of clicks, then the first pattern lands on beat 1.
+    // It plays even when the metronome is switched off, and it leaves the bar / sequence counters alone.
+    if (play.mode === 'sequence' && countInLeftRef.current > 0) {
+      const bpbNow = Math.max(1, s.beats);
+      const idx = bpbNow - countInLeftRef.current;
+      countInLeftRef.current -= 1;
+      lastWasCountInRef.current = true;
+      playClick(ctx, t, idx === 0, dest, false);
+      segmentsRef.current.push({
+        id: ++segIdRef.current,
+        start: t,
+        dur: beat,
+        ghost: false,
+        metro: true,
+        countIn: true,
+        beatPos: idx,
+        tracks: []
+      });
+      nextBeatRef.current = t + beat;
+      scheduledTempoRef.current = s.tempo;
+      return true;
+    }
+    lastWasCountInRef.current = false;
 
     // 1) Decide which tracks play on this beat
     const defs = [];
@@ -2063,8 +2100,16 @@ const ABELRhythmDominoes = () => {
     if (ctx.state === 'suspended') ctx.resume();
 
     // when re-queuing after a tempo change, the beat that was queued is replayed, so step back one
-    const prevBeat = keepPos ? Math.max(0, beatCountRef.current - 1) : 0;
-    const prevSeq = keepPos ? Math.max(0, seqPosRef.current - 1) : 0;
+    // (a queued count-in beat never touched those counters, so nothing is rolled back for it)
+    const stepBack = keepPos && !lastWasCountInRef.current ? 1 : 0;
+    const prevBeat = keepPos ? Math.max(0, beatCountRef.current - stepBack) : 0;
+    const prevSeq = keepPos ? Math.max(0, seqPosRef.current - stepBack) : 0;
+    // a re-queue (tempo change) replays the queued count-in beat; a fresh Sequence start counts in if enabled
+    const prevCountIn = keepPos
+      ? countInLeftRef.current + (lastWasCountInRef.current ? 1 : 0)
+      : mode === 'sequence' && settingsRef.current.countIn
+        ? Math.max(1, settingsRef.current.beats)
+        : 0;
 
     stopEngine();
 
@@ -2078,6 +2123,8 @@ const ABELRhythmDominoes = () => {
     beatCountRef.current = prevBeat;
     seqPosRef.current = prevSeq;
     scheduledTempoRef.current = null;
+    countInLeftRef.current = mode === 'sequence' ? Math.min(prevCountIn, Math.max(1, settingsRef.current.beats)) : 0;
+    lastWasCountInRef.current = false;
     nextBeatRef.current = ctx.currentTime + 0.08;
 
     scheduler();
@@ -2175,6 +2222,33 @@ const ABELRhythmDominoes = () => {
       cancelled = true;
     };
   }, []);
+
+  // restore the saved count-in choice (off by default)
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        if (window.storage) {
+          const r = await window.storage.get('abel:countIn');
+          if (!cancelled && r && r.value === '1') setCountInEnabledState(true);
+        }
+      } catch (e) {
+        /* nothing saved: stays off */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const setCountIn = (on) => {
+    setCountInEnabledState(on);
+    try {
+      if (window.storage) Promise.resolve(window.storage.set('abel:countIn', on ? '1' : '0')).catch(() => {});
+    } catch (e) {
+      /* could not be saved: ignore */
+    }
+  };
 
   const setNoteUnit = (k) => {
     setNoteUnitState(k);
@@ -4091,6 +4165,18 @@ const ABELRhythmDominoes = () => {
                     {playKind === 'sequence' ? <Pause size={16} /> : <Play size={16} />}
                     {playKind === 'sequence' ? 'Stop' : 'Play'} Sequence
                   </button>
+                  <button
+                    role="switch"
+                    aria-checked={countInEnabled}
+                    onClick={() => setCountIn(!countInEnabled)}
+                    title="Play one bar of clicks before the sequence starts (follows the beats per bar)"
+                    className={`px-4 py-2 rounded-lg whitespace-nowrap transition-colors ${
+                      countInEnabled ? 'bg-purple-600 text-white' : 'bg-gray-700 hover:bg-gray-600'
+                    }`}
+                  >
+                    Count-in {countInEnabled ? 'On' : 'Off'}
+                  </button>
+                  <span data-countin-badge className="abel-countin self-center" aria-live="polite" />
                   <ExportButtons getScore={() => makeScore('sequence')} disabled={sequence.length === 0} />
                   <button
                     onClick={enterFullscreen}
@@ -4228,6 +4314,19 @@ const ABELRhythmDominoes = () => {
                     {/* Options (collapsed by default) */}
                     {fsOptions && (
                       <div className="border-t border-gray-700 pt-2 space-y-2">
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="text-sm">Count-in ({beatsPerBar} beats)</span>
+                          <button
+                            role="switch"
+                            aria-checked={countInEnabled}
+                            onClick={() => setCountIn(!countInEnabled)}
+                            className={`h-10 px-4 rounded-lg font-bold ${
+                              countInEnabled ? 'bg-purple-600 text-white' : 'bg-gray-700 hover:bg-gray-600'
+                            }`}
+                          >
+                            {countInEnabled ? 'On' : 'Off'}
+                          </button>
+                        </div>
                         <div className={`flex items-center justify-between gap-3 ${metronomeEnabled ? '' : 'opacity-50'}`}>
                           <span className="text-sm">Clicks per beat</span>
                           <div className="flex items-center gap-1" role="radiogroup" aria-label="Metronome clicks per beat">
